@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "574647577224",
+    "project_id": "hidron-98166",
+    "storage_bucket": "hidron-98166.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:574647577224:android:3f1456693889321ab48d3d",
+        "android_client_info": {
+          "package_name": "com.example.offline_deals_app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDNV_TPsS2tDGQzoTx-_E8m0cjw-n6hYmw"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
