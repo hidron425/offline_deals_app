@@ -735,7 +735,7 @@ class _PendingShopButtonState extends State<_PendingShopButton> {
   }
 }
 
-// ----- ГЛАВНЫЙ ИГРОВОЙ ЭКРАН -----
+// ----- ГЛАВНЫЙ ИГРОВОЙ ЭКРАН (С БЕСКОНЕЧНЫМИ ЦИКЛАМИ) -----
 class DealsGameScreen extends StatefulWidget {
   const DealsGameScreen({super.key});
 
@@ -750,6 +750,7 @@ class _DealsGameScreenState extends State<DealsGameScreen> {
   final int _totalSteps = 5;
   final Set<String> _usedShopIds = {};
   late final String _userId;
+  int _cycleCount = 0;
 
   List<Shop> _allShops = [];
   String? _selectedCity;
@@ -760,10 +761,12 @@ class _DealsGameScreenState extends State<DealsGameScreen> {
   List<Shop>? _pendingForkShops;
   bool _isPathActive = false;
 
+  Shop? _lastShop;
+  String? _lastShopId;
+
   @override
   void initState() {
     super.initState();
-    // Для локального эмулятора функций (если используете)
     FirebaseFunctions functions = FirebaseFunctions.instance;
     functions.useFunctionsEmulator('localhost', 5001);
 
@@ -821,14 +824,30 @@ class _DealsGameScreenState extends State<DealsGameScreen> {
         pendingShops = _allShops.where((shop) => pendingIds.contains(shop.id)).toList();
         if (pendingShops.length != 2) pendingShops = null;
       }
+
+      final lastId = data['lastShopId'] as String?;
+      Shop? lastShop;
+      if (lastId != null && _allShops.isNotEmpty) {
+        lastShop = _allShops.firstWhere(
+          (s) => s.id == lastId,
+          orElse: () => null as dynamic,
+        ) as Shop?;
+      }
+
+      int completedSteps = (data['completedSteps'] as num?)?.toInt() ?? 0;
+
       setState(() {
-        _completedSteps = data['completedSteps'] ?? 0;
+        _completedSteps = completedSteps;
         final usedList = List<String>.from(data['usedShopIds'] ?? []);
         _usedShopIds.clear();
         _usedShopIds.addAll(usedList);
-        _isPathActive = _completedSteps > 0;
+        _isPathActive = completedSteps > 0;
         _pendingForkShops = pendingShops;
+        _cycleCount = (data['cycleCount'] as int?) ?? 0;
+        _lastShopId = lastId;
+        _lastShop = lastShop;
       });
+
       if (data.containsKey('bonusClaimed')) {
         await doc.reference.update({'bonusClaimed': FieldValue.delete()});
       }
@@ -839,9 +858,12 @@ class _DealsGameScreenState extends State<DealsGameScreen> {
         'completedSteps': 0,
         'usedShopIds': [],
         'pendingBonuses': [],
+        'claimedBonuses': [],
         'pendingForkShops': [],
         'subscribedShops': [],
         'pushMinIntervalHours': 1,
+        'cycleCount': 0,
+        'lastShopId': null,
       });
     }
   }
@@ -852,6 +874,8 @@ class _DealsGameScreenState extends State<DealsGameScreen> {
       'completedSteps': _completedSteps,
       'usedShopIds': _usedShopIds.toList(),
       'pendingForkShops': pendingIds,
+      'cycleCount': _cycleCount,
+      'lastShopId': _lastShopId,
     });
   }
 
@@ -861,6 +885,8 @@ class _DealsGameScreenState extends State<DealsGameScreen> {
       _usedShopIds.clear();
       _isPathActive = false;
       _pendingForkShops = null;
+      _lastShop = null;
+      _lastShopId = null;
     });
     await _saveProgress();
   }
@@ -875,20 +901,96 @@ class _DealsGameScreenState extends State<DealsGameScreen> {
       _selectedMall = null;
       _selectedMallId = null;
       _isLoading = true;
+      _cycleCount = 0;
+      _lastShop = null;
+      _lastShopId = null;
     });
     await _firestore.collection('user_progress').doc(_userId).update({
       'completedSteps': 0,
       'usedShopIds': [],
       'pendingBonuses': [],
+      'claimedBonuses': [],
       'bonusClaimed': FieldValue.delete(),
       'selectedCity': FieldValue.delete(),
       'selectedMall': FieldValue.delete(),
       'selectedMallId': FieldValue.delete(),
       'pendingForkShops': [],
+      'cycleCount': 0,
+      'lastShopId': FieldValue.delete(),
     });
     await _loadAll();
   }
 
+  // ------------------------------------------------------------
+  // Универсальный метод проверки и выдачи бонусов (новый)
+  // ------------------------------------------------------------
+  Future<void> _checkBonuses(String trigger, {Shop? currentShop}) async {
+    final userDoc = await _firestore.collection('user_progress').doc(_userId).get();
+    final userData = userDoc.data()!;
+    final pending = List<String>.from(userData['pendingBonuses'] ?? []);
+    final claimed = List<String>.from(userData['claimedBonuses'] ?? []);
+    final cycleCount = userData['cycleCount'] ?? 0;
+    final completedSteps = userData['completedSteps'] ?? 0;
+
+    final rulesSnap = await _firestore
+        .collection('bonus_rules')
+        .where('active', isEqualTo: true)
+        .where('trigger', isEqualTo: trigger)
+        .get();
+
+    for (var doc in rulesSnap.docs) {
+      final rule = doc.data() as Map<String, dynamic>;
+      final conditions = rule['conditions'] as Map<String, dynamic>? ?? {};
+
+      // Проверка условий
+      if (conditions['cycleCount'] != null && cycleCount != conditions['cycleCount']) continue;
+      if (conditions['stepCount'] != null && completedSteps != conditions['stepCount']) continue;
+      if (conditions['minStepsCompleted'] != null && completedSteps < conditions['minStepsCompleted']) continue;
+      if (conditions['shopId'] != null && currentShop?.id != conditions['shopId']) continue;
+      if (conditions['category'] != null && currentShop?.category != conditions['category']) continue;
+
+      // Проверка на однократность получения
+      if (rule['oncePerUser'] == true) {
+        if (pending.contains(doc.id) || claimed.contains(doc.id)) continue;
+      }
+
+      // Выдаём бонус
+      await _firestore.collection('user_progress').doc(_userId).update({
+        'pendingBonuses': FieldValue.arrayUnion([doc.id]),
+      });
+
+      if (mounted) {
+        final reward = rule['reward'] as Map<String, dynamic>? ?? {};
+        final title = reward['title'] ?? 'Новый бонус!';
+        final message = reward['message'] ?? 'Зайдите в профиль, чтобы получить.';
+        final icon = reward['icon'] ?? '🎁';
+        showDialog(
+          context: context,
+          builder: (_) => AlertDialog(
+            title: Text('$icon $title'),
+            content: Text(message),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Позже'),
+              ),
+              ElevatedButton(
+                onPressed: () {
+                  Navigator.pop(context);
+                  context.findAncestorStateOfType<_MainScreenState>()?.setTab(2);
+                },
+                child: const Text('В профиль'),
+              ),
+            ],
+          ),
+        );
+      }
+    }
+  }
+
+  // ------------------------------------------------------------
+  // Остальные методы (без изменений, кроме удаления старого бонусного кода)
+  // ------------------------------------------------------------
   Future<void> _showLocationPicker({bool isChanging = false}) async {
     final Map<String, List<Map<String, String>>> citiesAndMalls = {
       'Москва': [
@@ -995,7 +1097,6 @@ class _DealsGameScreenState extends State<DealsGameScreen> {
 
   List<Shop> _getNextTwoShops(Shop currentShop) {
     var available = _allShops.where((s) => !_usedShopIds.contains(s.id) && s.id != currentShop.id).toList();
-    print('🟣 Доступно магазинов (без использованных и текущего): ${available.length}');
     if (available.length < 2) return available;
     final weighted = <Shop>[];
     for (var shop in available) {
@@ -1026,7 +1127,6 @@ class _DealsGameScreenState extends State<DealsGameScreen> {
   }
 
   Future<Map<String, dynamic>?> _getActiveCollab(Shop currentShop) async {
-    print('🔍 _getActiveCollab: currentShop.id = ${currentShop.id}');
     try {
       final collabQuery = await _firestore
           .collection('active_collabs')
@@ -1034,7 +1134,6 @@ class _DealsGameScreenState extends State<DealsGameScreen> {
           .where('expires', isGreaterThan: Timestamp.now())
           .limit(1)
           .get();
-      print('🔍 Найдено коллабораций: ${collabQuery.docs.length}');
       if (collabQuery.docs.isEmpty) return null;
       final collabData = collabQuery.docs.first.data();
       final toShopDoc = await _firestore.collection('shops').doc(collabData['toShopId']).get();
@@ -1052,11 +1151,8 @@ class _DealsGameScreenState extends State<DealsGameScreen> {
   }
 
   Future<void> _showForkDialog(Shop currentShop) async {
-    print('🟢 _showForkDialog вызван для магазина: ${currentShop.name} (id: ${currentShop.id})');
     final nextShops = _getNextTwoShops(currentShop);
-    print('🟢 nextShops длина: ${nextShops.length}');
     if (nextShops.length < 2) {
-      print('⚠️ Меньше 2 магазинов для продолжения');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Нет доступных магазинов для продолжения пути. Сбросьте прогресс.')),
@@ -1105,6 +1201,8 @@ class _DealsGameScreenState extends State<DealsGameScreen> {
               setState(() {
                 _pendingForkShops = nextShops;
                 _isPathActive = true;
+                _lastShopId = currentShop.id;
+                _lastShop = currentShop;
               });
               _saveProgress();
             },
@@ -1115,11 +1213,6 @@ class _DealsGameScreenState extends State<DealsGameScreen> {
             onPressed: () async {
               Navigator.pop(context);
               await _resetProgress();
-              if (mounted) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Путь сброшен. Можете начать заново.')),
-                );
-              }
             },
             style: TextButton.styleFrom(foregroundColor: Colors.black87),
             child: const Text('Сбросить путь'),
@@ -1129,85 +1222,65 @@ class _DealsGameScreenState extends State<DealsGameScreen> {
     );
   }
 
- Widget _forkButton(Shop shop, {required bool isCollab, String? collabDocId}) {
-  return Expanded(
-    child: Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 8),
-      child: ElevatedButton(
-        onPressed: () async {
-          Navigator.pop(context);
-          if (isCollab && collabDocId != null) {
-            final collabRef = _firestore.collection('active_collabs').doc(collabDocId);
-            try {
-              // Читаем коллаборацию
-              final collabDoc = await collabRef.get();
-              if (!collabDoc.exists) {
-                print('⚠️ Коллаборация не найдена');
-                return;
-              }
-              final data = collabDoc.data()!;
-              print('🔍 Данные collab: $data');
-              final currentClicks = (data['clicks'] as int?) ?? 0;
-              await collabRef.update({'clicks': currentClicks + 1});
+  Widget _forkButton(Shop shop, {required bool isCollab, String? collabDocId}) {
+    return Expanded(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8),
+        child: ElevatedButton(
+          onPressed: () async {
+            Navigator.pop(context);
+            if (isCollab && collabDocId != null) {
+              final collabRef = _firestore.collection('active_collabs').doc(collabDocId);
+              try {
+                final collabDoc = await collabRef.get();
+                if (!collabDoc.exists) return;
+                final data = collabDoc.data()!;
+                final currentClicks = (data['clicks'] as int?) ?? 0;
+                await collabRef.update({'clicks': currentClicks + 1});
 
-              final offerId = data['offerId'] as String?;
-              final bid = data['bid'] as int?;
-              print('🔍 offerId: $offerId, bid: $bid');
-              if (offerId != null && bid != null && bid > 0) {
-                final offerRef = _firestore.collection('auction_offers').doc(offerId);
-                final offerDoc = await offerRef.get();
-                if (!offerDoc.exists) {
-                  print('⚠️ Оферта не найдена');
-                  return;
-                }
-                final offerData = offerDoc.data()!;
-                print('🔍 Данные оферты: $offerData');
-                final remaining = offerData['remainingBudget'] as int? ?? 0;
-                if (remaining >= bid) {
-                  final newRemaining = remaining - bid;
-                  await offerRef.update({'remainingBudget': newRemaining});
-                  print('🔍 Новый остаток: $newRemaining');
-                  if (newRemaining <= 0) {
-                    print('🔍 Бюджет исчерпан, деактивируем оферту и удаляем коллаборацию');
-                    await offerRef.update({'status': 'exhausted'});
+                final offerId = data['offerId'] as String?;
+                final bid = data['bid'] as int?;
+                if (offerId != null && bid != null && bid > 0) {
+                  final offerRef = _firestore.collection('auction_offers').doc(offerId);
+                  final offerDoc = await offerRef.get();
+                  if (!offerDoc.exists) return;
+                  final offerData = offerDoc.data()!;
+                  final remaining = offerData['remainingBudget'] as int? ?? 0;
+                  if (remaining >= bid) {
+                    final newRemaining = remaining - bid;
+                    await offerRef.update({'remainingBudget': newRemaining});
+                    if (newRemaining <= 0) {
+                      await offerRef.update({'status': 'exhausted'});
+                      await collabRef.delete();
+                    }
+                  } else {
                     await collabRef.delete();
                   }
-                } else {
-                  print('⚠️ Недостаточно бюджета, удаляем коллаборацию');
-                  await collabRef.delete();
                 }
-              } else {
-                print('ℹ️ Нет offerId или bid, пропускаем списание бюджета');
+              } catch (e) {
+                print('❌ Ошибка в коллаборации: $e');
               }
-            } catch (e, stack) {
-              print('❌ Ошибка: $e');
-              print('Stack: $stack');
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(content: Text('Ошибка: $e')),
-              );
-              return;
             }
-          }
-          await _activateShop(shop);
-        },
-        style: ElevatedButton.styleFrom(
-          backgroundColor: isCollab ? Colors.orange : Colors.white,
-          foregroundColor: isCollab ? Colors.white : const Color(0xFF6C63FF),
-          padding: const EdgeInsets.symmetric(vertical: 12),
-        ),
-        child: Column(
-          children: [
-            Text(shop.icon, style: const TextStyle(fontSize: 32)),
-            const SizedBox(height: 4),
-            Text(shop.name, style: const TextStyle(fontSize: 14)),
-            if (isCollab) const Text('🎁 Спецпредложение!', style: TextStyle(fontSize: 10)),
-            Text(shop.discount, style: const TextStyle(fontSize: 12)),
-          ],
+            await _activateShop(shop);
+          },
+          style: ElevatedButton.styleFrom(
+            backgroundColor: isCollab ? Colors.orange : Colors.white,
+            foregroundColor: isCollab ? Colors.white : const Color(0xFF6C63FF),
+            padding: const EdgeInsets.symmetric(vertical: 12),
+          ),
+          child: Column(
+            children: [
+              Text(shop.icon, style: const TextStyle(fontSize: 32)),
+              const SizedBox(height: 4),
+              Text(shop.name, style: const TextStyle(fontSize: 14)),
+              if (isCollab) const Text('🎁 Спецпредложение!', style: TextStyle(fontSize: 10)),
+              Text(shop.discount, style: const TextStyle(fontSize: 12)),
+            ],
+          ),
         ),
       ),
-    ),
-  );
-}
+    );
+  }
 
   Future<void> _activateShop(Shop shop) async {
     if (_usedShopIds.contains(shop.id)) return;
@@ -1217,6 +1290,8 @@ class _DealsGameScreenState extends State<DealsGameScreen> {
       if (_completedSteps < _totalSteps) _completedSteps++;
       _pendingForkShops = null;
       _isPathActive = _completedSteps > 0 && _completedSteps < _totalSteps;
+      _lastShop = shop;
+      _lastShopId = shop.id;
     });
     await _saveProgress();
     await _showQRDialog(shop);
@@ -1226,12 +1301,46 @@ class _DealsGameScreenState extends State<DealsGameScreen> {
       'step': currentStep,
       'timestamp': FieldValue.serverTimestamp(),
     });
+
+    // Проверка бонусов за завершение шага
+    await _checkBonuses('step_completed', currentShop: shop);
+
     if (_completedSteps == _totalSteps) {
-      await _checkAndAddPendingBonus();
+      _startNewCycle();
     } else {
       await _showForkDialog(shop);
     }
   }
+
+ Future<void> _startNewCycle() async {
+  final newCycleCount = _cycleCount + 1;
+  // Сохраняем новый цикл в Firestore
+  await _firestore.collection('user_progress').doc(_userId).update({
+    'cycleCount': newCycleCount,
+    'completedSteps': 0,
+    'usedShopIds': [],
+    'pendingForkShops': [],
+    'lastShopId': null,
+  });
+
+  setState(() {
+    _completedSteps = 0;
+    _usedShopIds.clear();
+    _cycleCount = newCycleCount;
+    _isPathActive = true;
+    _pendingForkShops = null;
+    _lastShop = null;
+    _lastShopId = null;
+  });
+
+  if (!mounted) return;
+
+  // Проверяем и начисляем бонусы за завершение цикла
+  await _checkBonuses('cycle_completed');
+
+  // Сразу предлагаем начать новый путь
+  _showFirstChoice();
+}
 
   Future<void> _showQRDialog(Shop shop) async {
     final userDoc = await _firestore.collection('user_progress').doc(_userId).get();
@@ -1289,44 +1398,6 @@ class _DealsGameScreenState extends State<DealsGameScreen> {
     );
   }
 
-  Future<void> _checkAndAddPendingBonus() async {
-    final userProgressDoc = _firestore.collection('user_progress').doc(_userId);
-    final userData = await userProgressDoc.get();
-    final pending = List<String>.from(userData.data()?['pendingBonuses'] ?? []);
-    if (pending.isNotEmpty) return;
-    if (userData.data()?['bonusClaimed'] == true) return;
-    final rulesSnapshot = await _firestore
-        .collection('bonus_rules')
-        .where('active', isEqualTo: true)
-        .where('requiredSteps', isLessThanOrEqualTo: _completedSteps)
-        .limit(1)
-        .get();
-    if (rulesSnapshot.docs.isNotEmpty) {
-      final ruleId = rulesSnapshot.docs.first.id;
-      await userProgressDoc.update({'pendingBonuses': FieldValue.arrayUnion([ruleId])});
-      if (mounted) {
-        showDialog(
-          context: context,
-          barrierDismissible: false,
-          builder: (context) => AlertDialog(
-            title: const Text('🎉 Новый бонус!'),
-            content: const Text('Вы получили бонус за прохождение 5 шагов. Зайдите в профиль, чтобы активировать его.'),
-            actions: [
-              TextButton(onPressed: () => Navigator.pop(context), child: const Text('Потом')),
-              ElevatedButton(
-                onPressed: () {
-                  Navigator.pop(context);
-                  context.findAncestorStateOfType<_MainScreenState>()?.setTab(2);
-                },
-                child: const Text('В профиль'),
-              ),
-            ],
-          ),
-        );
-      }
-    }
-  }
-
   Future<void> _showFirstChoice() async {
     if (_allShops.isEmpty) return;
     var available = _allShops.where((s) => !_usedShopIds.contains(s.id)).toList();
@@ -1355,13 +1426,80 @@ class _DealsGameScreenState extends State<DealsGameScreen> {
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context),
+            onPressed: () {
+              Navigator.pop(context);
+              setState(() {
+                _pendingForkShops = first;
+                _isPathActive = true;
+              });
+              _saveProgress();
+            },
             style: TextButton.styleFrom(foregroundColor: Colors.black87),
-            child: const Text('Позже'),
+            child: const Text('Позже (продолжить позже)'),
           ),
         ],
       ),
     );
+  }
+
+  Future<void> _resumePath() async {
+    if (_completedSteps == 0) {
+      _showFirstChoice();
+      return;
+    }
+
+    if (_lastShop != null) {
+      await _showForkDialog(_lastShop!);
+      return;
+    }
+
+    if (_lastShopId != null) {
+      final doc = await _firestore.collection('shops').doc(_lastShopId).get();
+      if (doc.exists) {
+        final shop = Shop.fromFirestore(doc);
+        setState(() => _lastShop = shop);
+        await _showForkDialog(shop);
+        return;
+      }
+    }
+
+    if (_usedShopIds.isNotEmpty) {
+      final lastUsedId = _usedShopIds.last;
+      final doc = await _firestore.collection('shops').doc(lastUsedId).get();
+      if (doc.exists) {
+        final shop = Shop.fromFirestore(doc);
+        setState(() {
+          _lastShop = shop;
+          _lastShopId = shop.id;
+        });
+        await _saveProgress();
+        await _showForkDialog(shop);
+        return;
+      }
+    }
+
+    if (mounted) {
+      showDialog(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Нет данных'),
+          content: const Text('Не удалось найти последний магазин. Сбросить прогресс?'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Отмена'),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                Navigator.pop(ctx);
+                _resetProgress();
+              },
+              child: const Text('Сбросить'),
+            ),
+          ],
+        ),
+      );
+    }
   }
 
   Widget _buildMainContent() {
@@ -1401,27 +1539,44 @@ class _DealsGameScreenState extends State<DealsGameScreen> {
         ),
       );
     }
+
     if (_isPathActive) {
       return Center(
-        child: Container(
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            color: Colors.white.withOpacity(0.85),
-            borderRadius: BorderRadius.circular(40),
-          ),
-          child: const Text(
-            'Продолжайте путь, выбирая предложенные варианты',
-            style: TextStyle(color: Colors.black87),
-          ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.85),
+                borderRadius: BorderRadius.circular(40),
+              ),
+              child: const Text(
+                'Продолжайте путь, выбирая предложенные варианты',
+                style: TextStyle(color: Colors.black87),
+              ),
+            ),
+            const SizedBox(height: 24),
+            ElevatedButton(
+              onPressed: _resumePath,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF6C63FF),
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 14),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
+              ),
+              child: const Text('Продолжить путь', style: TextStyle(fontSize: 16)),
+            ),
+          ],
         ),
       );
     }
+
     return _buildShopIconsGrid();
   }
 
   Widget _buildShopIconsGrid() {
-    final shopsToShow = _allShops;
-    if (shopsToShow.isEmpty) {
+    if (_allShops.isEmpty) {
       return Center(
         child: Container(
           padding: const EdgeInsets.all(16),
@@ -1440,7 +1595,7 @@ class _DealsGameScreenState extends State<DealsGameScreen> {
             alignment: WrapAlignment.center,
             spacing: 16,
             runSpacing: 16,
-            children: shopsToShow.map((shop) => _ShopCard(shop: shop, onTap: _activateShop)).toList(),
+            children: _allShops.map((shop) => _ShopCard(shop: shop, onTap: _activateShop)).toList(),
           ),
           const SizedBox(height: 24),
           ElevatedButton(
@@ -1513,7 +1668,7 @@ class _DealsGameScreenState extends State<DealsGameScreen> {
                 ),
                 const SizedBox(height: 8),
                 Text(
-                  'Прогресс: $_completedSteps / $_totalSteps',
+                  'Цикл $_cycleCount – Прогресс: $_completedSteps / $_totalSteps',
                   style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w500),
                 ),
                 if (_selectedCity != null && _selectedMall != null)
@@ -1578,6 +1733,7 @@ class _DealsGameScreenState extends State<DealsGameScreen> {
 }
 
 // ----- ЭКРАН ПРОФИЛЯ (с настройками пушей и подписками) -----
+// ----- ЭКРАН ПРОФИЛЯ (адаптирован под универсальные бонусы) -----
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
 
@@ -1639,6 +1795,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     _loadSubscribedShops();
   }
 
+  // Загружаем сами документы правил (не только ID)
   Future<List<QueryDocumentSnapshot>> _getPendingBonuses() async {
     final userDoc = await _firestore.collection('user_progress').doc(_userId).get();
     final pendingIds = List<String>.from(userDoc.data()?['pendingBonuses'] ?? []);
@@ -1650,39 +1807,67 @@ class _ProfileScreenState extends State<ProfileScreen> {
     return snapshot.docs;
   }
 
-  Future<void> _claimBonus(String ruleId, String targetShopId, String bonusDescription) async {
-    final shopDoc = await _firestore.collection('shops').doc(targetShopId).get();
-    if (!shopDoc.exists) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Магазин не найден')));
-      return;
-    }
-    final targetShop = Shop.fromFirestore(shopDoc);
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => AlertDialog(
-        title: const Text('Ваш бонус'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(Icons.qr_code_scanner_rounded, size: 120, color: Color(0xFF6C63FF)),
-            const SizedBox(height: 16),
-            Text(bonusDescription),
-            const SizedBox(height: 8),
-            Text('Магазин: ${targetShop.name}'),
+  // Обновлённый метод получения бонуса – теперь принимает reward (map)
+  Future<void> _claimBonus(String ruleId, Map<String, dynamic> rewardData) async {
+    final targetShopId = rewardData['targetShopId'] as String? ?? '';
+    final bonusDescription = rewardData['title'] as String? ?? 'Бонус';
+    final message = rewardData['message'] as String? ?? '';
+    final icon = rewardData['icon'] as String? ?? '🎁';
+
+    // Если есть targetShopId – показываем QR с магазином
+    if (targetShopId.isNotEmpty) {
+      final shopDoc = await _firestore.collection('shops').doc(targetShopId).get();
+      if (shopDoc.exists) {
+        final targetShop = Shop.fromFirestore(shopDoc);
+        showDialog(
+          context: context,
+          barrierDismissible: false,
+          builder: (context) => AlertDialog(
+            title: Text('$icon $bonusDescription'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(Icons.qr_code_scanner_rounded, size: 120, color: Color(0xFF6C63FF)),
+                const SizedBox(height: 16),
+                Text(message),
+                const SizedBox(height: 8),
+                Text('Магазин: ${targetShop.name}'),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                style: TextButton.styleFrom(foregroundColor: Colors.black87),
+                child: const Text('Закрыть'),
+              ),
+            ],
+          ),
+        );
+      }
+    } else {
+      // Бонус без конкретного магазина (например, значок)
+      showDialog(
+        context: context,
+        builder: (_) => AlertDialog(
+          title: Text('$icon $bonusDescription'),
+          content: Text(message),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('OK'),
+            ),
           ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            style: TextButton.styleFrom(foregroundColor: Colors.black87),
-            child: const Text('Закрыть'),
-          ),
-        ],
-      ),
-    );
-    await _firestore.collection('user_progress').doc(_userId).update({'pendingBonuses': FieldValue.arrayRemove([ruleId])});
-    setState(() {});
+      );
+    }
+
+    // Удаляем из pending, добавляем в claimed
+    await _firestore.collection('user_progress').doc(_userId).update({
+      'pendingBonuses': FieldValue.arrayRemove([ruleId]),
+      'claimedBonuses': FieldValue.arrayUnion([ruleId]),
+    });
+
+    setState(() {}); // обновляем список бонусов
   }
 
   @override
@@ -1759,6 +1944,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 itemBuilder: (context, index) {
                   final rule = bonuses[index];
                   final data = rule.data() as Map<String, dynamic>;
+                  final reward = data['reward'] as Map<String, dynamic>? ?? {};
+                  final title = reward['title'] ?? 'Бонус';
+                  final icon = reward['icon'] ?? '🎁';
                   return Container(
                     margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
                     decoration: BoxDecoration(
@@ -1768,16 +1956,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     ),
                     child: ListTile(
                       contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+                      leading: Text(icon, style: const TextStyle(fontSize: 32)),
                       title: Text(
-                        data['bonusDescription'] ?? 'Бонус',
+                        title,
                         style: const TextStyle(fontWeight: FontWeight.w600),
                       ),
                       trailing: ElevatedButton(
-                        onPressed: () => _claimBonus(
-                          rule.id,
-                          data['targetShopId'] ?? '',
-                          data['bonusDescription'] ?? '',
-                        ),
+                        onPressed: () => _claimBonus(rule.id, reward),
                         style: ElevatedButton.styleFrom(
                           backgroundColor: const Color(0xFF6C63FF),
                           foregroundColor: Colors.white,
