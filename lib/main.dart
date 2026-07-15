@@ -284,24 +284,28 @@ class Shop {
   final String name;
   final String icon;
   final String discount;
+  final String shortDiscount;
   final String description;
   final String location;
   final String category;
   final int priority;
   final String mallId;
   final String imageUrl;
+  final String infoImageUrl;
 
   Shop({
     required this.id,
     required this.name,
     required this.icon,
     required this.discount,
+    this.shortDiscount = '',
     required this.description,
     required this.location,
     required this.category,
     required this.priority,
     required this.mallId,
     required this.imageUrl,
+     this.infoImageUrl = '',
   });
 
   factory Shop.fromFirestore(DocumentSnapshot doc) {
@@ -311,12 +315,14 @@ class Shop {
       name: data['name'] ?? 'Без названия',
       icon: data['icon'] ?? '🛍️',
       discount: data['discount'] ?? '',
+      shortDiscount: data['shortDiscount'] ?? '',
       description: data['description'] ?? '',
       location: data['location'] ?? '',
       category: data['category'] ?? 'other',
       priority: (data['priority'] as int?) ?? 1,
       mallId: data['mallId'] ?? '',
       imageUrl: data['imageUrl'] ?? '',
+      infoImageUrl: data['infoImageUrl'] ?? '',
     );
   }
 }
@@ -587,11 +593,19 @@ class _BannerItem extends StatelessWidget {
   }
 }
 
-// ----- КАРТОЧКА МАГАЗИНА -----
+// ----- КАРТОЧКА МАГАЗИНА (с иконкой информации) -----
+// ----- КАРТОЧКА МАГАЗИНА (с иконкой информации) -----
+// ----- КАРТОЧКА МАГАЗИНА (с иконкой информации) -----
 class _ShopCard extends StatefulWidget {
   final Shop shop;
   final Function(Shop) onTap;
-  const _ShopCard({required this.shop, required this.onTap});
+  final VoidCallback? onInfoTap;
+
+  const _ShopCard({
+    required this.shop,
+    required this.onTap,
+    this.onInfoTap,
+  });
 
   @override
   State<_ShopCard> createState() => _ShopCardState();
@@ -599,9 +613,15 @@ class _ShopCard extends StatefulWidget {
 
 class _ShopCardState extends State<_ShopCard> {
   bool _isHovered = false;
+  bool _infoHovered = false;
 
   @override
   Widget build(BuildContext context) {
+    // 👇 ВСЕГДА проверяем shortDiscount, иначе discount
+    final String cardDiscount = widget.shop.shortDiscount.isNotEmpty
+        ? widget.shop.shortDiscount
+        : widget.shop.discount;
+
     return MouseRegion(
       cursor: SystemMouseCursors.click,
       onEnter: (_) => setState(() => _isHovered = true),
@@ -640,6 +660,33 @@ class _ShopCardState extends State<_ShopCard> {
                       color: Colors.grey[100],
                       child: Center(child: Text(widget.shop.icon, style: const TextStyle(fontSize: 48))),
                     ),
+                  // Иконка информации
+                  if (widget.onInfoTap != null)
+                    Positioned(
+                      top: 4,
+                      right: 4,
+                      child: MouseRegion(
+                        onEnter: (_) => setState(() => _infoHovered = true),
+                        onExit: (_) => setState(() => _infoHovered = false),
+                        child: GestureDetector(
+                          onTap: widget.onInfoTap,
+                          child: AnimatedContainer(
+                            duration: const Duration(milliseconds: 200),
+                            padding: const EdgeInsets.all(4),
+                            decoration: BoxDecoration(
+                              color: _infoHovered ? Colors.black87 : Colors.black54,
+                              shape: BoxShape.circle,
+                            ),
+                            child: Icon(
+                              Icons.info_outline,
+                              size: _infoHovered ? 14 : 12,
+                              color: Colors.white,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  // Нижняя плашка с названием и КРАТКОЙ скидкой
                   Positioned(
                     left: 0,
                     right: 0,
@@ -664,10 +711,12 @@ class _ShopCardState extends State<_ShopCard> {
                             overflow: TextOverflow.ellipsis,
                           ),
                           const SizedBox(height: 2),
-                          Text(
-                            widget.shop.discount,
-                            style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: Colors.green),
-                          ),
+                          if (cardDiscount.isNotEmpty)
+                            Text(
+                              cardDiscount,
+                              style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: Colors.green),
+                              textAlign: TextAlign.center,
+                            ),
                         ],
                       ),
                     ),
@@ -682,11 +731,17 @@ class _ShopCardState extends State<_ShopCard> {
   }
 }
 
-// ----- КНОПКА ОТЛОЖЕННОГО МАГАЗИНА -----
+// ----- КНОПКА ОТЛОЖЕННОГО МАГАЗИНА (с иконкой информации) -----
 class _PendingShopButton extends StatefulWidget {
   final Shop shop;
   final Function(Shop) onTap;
-  const _PendingShopButton({required this.shop, required this.onTap});
+  final VoidCallback? onInfoTap;
+
+  const _PendingShopButton({
+    required this.shop,
+    required this.onTap,
+    this.onInfoTap,
+  });
 
   @override
   State<_PendingShopButton> createState() => _PendingShopButtonState();
@@ -694,9 +749,14 @@ class _PendingShopButton extends StatefulWidget {
 
 class _PendingShopButtonState extends State<_PendingShopButton> {
   bool _isHovered = false;
+  bool _infoHovered = false;
 
   @override
   Widget build(BuildContext context) {
+    final String cardDiscount = widget.shop.shortDiscount.isNotEmpty
+        ? widget.shop.shortDiscount
+        : widget.shop.discount;
+
     return MouseRegion(
       cursor: SystemMouseCursors.click,
       onEnter: (_) => setState(() => _isHovered = true),
@@ -716,16 +776,46 @@ class _PendingShopButtonState extends State<_PendingShopButton> {
                   ? [BoxShadow(color: Colors.black.withOpacity(0.2), blurRadius: 12, offset: const Offset(0, 8))]
                   : [BoxShadow(color: Colors.black.withOpacity(0.1), blurRadius: 6, offset: const Offset(0, 2))],
             ),
-            child: Column(
+            child: Stack(
               children: [
-                if (widget.shop.imageUrl.isNotEmpty)
-                  Image.network(widget.shop.imageUrl, width: 80, height: 80, fit: BoxFit.cover)
-                else
-                  Text(widget.shop.icon, style: const TextStyle(fontSize: 48)),
-                const SizedBox(height: 8),
-                Text(widget.shop.name, style: const TextStyle(fontWeight: FontWeight.bold)),
-                const SizedBox(height: 4),
-                Text(widget.shop.discount, style: const TextStyle(fontWeight: FontWeight.w600, color: Colors.green)),
+                Column(
+                  children: [
+                    if (widget.shop.imageUrl.isNotEmpty)
+                      Image.network(widget.shop.imageUrl, width: 80, height: 80, fit: BoxFit.cover)
+                    else
+                      Text(widget.shop.icon, style: const TextStyle(fontSize: 48)),
+                    const SizedBox(height: 8),
+                    Text(widget.shop.name, style: const TextStyle(fontWeight: FontWeight.bold)),
+                    const SizedBox(height: 4),
+                    if (cardDiscount.isNotEmpty)
+                      Text(cardDiscount, style: const TextStyle(fontWeight: FontWeight.w600, color: Colors.green)),
+                  ],
+                ),
+                if (widget.onInfoTap != null)
+                  Positioned(
+                    top: 0,
+                    right: 0,
+                    child: MouseRegion(
+                      onEnter: (_) => setState(() => _infoHovered = true),
+                      onExit: (_) => setState(() => _infoHovered = false),
+                      child: GestureDetector(
+                        onTap: widget.onInfoTap,
+                        child: AnimatedContainer(
+                          duration: const Duration(milliseconds: 200),
+                          padding: const EdgeInsets.all(4),
+                          decoration: BoxDecoration(
+                            color: _infoHovered ? Colors.black87 : Colors.black54,
+                            shape: BoxShape.circle,
+                          ),
+                          child: Icon(
+                            Icons.info_outline,
+                            size: _infoHovered ? 14 : 12,
+                            color: Colors.white,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
               ],
             ),
           ),
@@ -735,7 +825,7 @@ class _PendingShopButtonState extends State<_PendingShopButton> {
   }
 }
 
-// ----- ГЛАВНЫЙ ИГРОВОЙ ЭКРАН (С БЕСКОНЕЧНЫМИ ЦИКЛАМИ) -----
+// ----- ГЛАВНЫЙ ИГРОВОЙ ЭКРАН -----
 class DealsGameScreen extends StatefulWidget {
   const DealsGameScreen({super.key});
 
@@ -841,7 +931,7 @@ class _DealsGameScreenState extends State<DealsGameScreen> {
         final usedList = List<String>.from(data['usedShopIds'] ?? []);
         _usedShopIds.clear();
         _usedShopIds.addAll(usedList);
-        _isPathActive = completedSteps > 0;
+        _isPathActive = (data['isPathActive'] as bool?) ?? (completedSteps > 0);
         _pendingForkShops = pendingShops;
         _cycleCount = (data['cycleCount'] as int?) ?? 0;
         _lastShopId = lastId;
@@ -864,6 +954,7 @@ class _DealsGameScreenState extends State<DealsGameScreen> {
         'pushMinIntervalHours': 1,
         'cycleCount': 0,
         'lastShopId': null,
+        'isPathActive': false,
       });
     }
   }
@@ -876,6 +967,7 @@ class _DealsGameScreenState extends State<DealsGameScreen> {
       'pendingForkShops': pendingIds,
       'cycleCount': _cycleCount,
       'lastShopId': _lastShopId,
+      'isPathActive': _isPathActive,
     });
   }
 
@@ -917,13 +1009,12 @@ class _DealsGameScreenState extends State<DealsGameScreen> {
       'pendingForkShops': [],
       'cycleCount': 0,
       'lastShopId': FieldValue.delete(),
+      'isPathActive': false,
     });
     await _loadAll();
   }
 
-  // ------------------------------------------------------------
-  // Универсальный метод проверки и выдачи бонусов (новый)
-  // ------------------------------------------------------------
+  // --- Универсальная проверка бонусов ---
   Future<void> _checkBonuses(String trigger, {Shop? currentShop}) async {
     final userDoc = await _firestore.collection('user_progress').doc(_userId).get();
     final userData = userDoc.data()!;
@@ -942,19 +1033,16 @@ class _DealsGameScreenState extends State<DealsGameScreen> {
       final rule = doc.data() as Map<String, dynamic>;
       final conditions = rule['conditions'] as Map<String, dynamic>? ?? {};
 
-      // Проверка условий
       if (conditions['cycleCount'] != null && cycleCount != conditions['cycleCount']) continue;
       if (conditions['stepCount'] != null && completedSteps != conditions['stepCount']) continue;
       if (conditions['minStepsCompleted'] != null && completedSteps < conditions['minStepsCompleted']) continue;
       if (conditions['shopId'] != null && currentShop?.id != conditions['shopId']) continue;
       if (conditions['category'] != null && currentShop?.category != conditions['category']) continue;
 
-      // Проверка на однократность получения
       if (rule['oncePerUser'] == true) {
         if (pending.contains(doc.id) || claimed.contains(doc.id)) continue;
       }
 
-      // Выдаём бонус
       await _firestore.collection('user_progress').doc(_userId).update({
         'pendingBonuses': FieldValue.arrayUnion([doc.id]),
       });
@@ -988,9 +1076,130 @@ class _DealsGameScreenState extends State<DealsGameScreen> {
     }
   }
 
-  // ------------------------------------------------------------
-  // Остальные методы (без изменений, кроме удаления старого бонусного кода)
-  // ------------------------------------------------------------
+  // ----- ИНФОРМАЦИОННОЕ ОКНО МАГАЗИНА (вызывается по нажатию на "i") -----
+void _showShopInfo(Shop shop) {
+  final infoImage = (shop.infoImageUrl.isNotEmpty) ? shop.infoImageUrl : shop.imageUrl;
+  final screenWidth = MediaQuery.of(context).size.width;
+  final screenHeight = MediaQuery.of(context).size.height;
+  final containerWidth = screenWidth * 0.3;                 // 30% ширины экрана
+  final imageHeight = containerWidth * (720 / 960);         // точная высота под пропорции 4:3
+
+  showDialog(
+    context: context,
+    barrierDismissible: true,
+    builder: (ctx) => Center(
+      child: FractionallySizedBox(
+        widthFactor: 0.3,   // окно займёт 30% ширины экрана
+        child: ConstrainedBox(
+          constraints: BoxConstraints(maxHeight: screenHeight * 0.9),
+          child: Container(
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(28),
+            ),
+            clipBehavior: Clip.antiAlias,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  if (infoImage.isNotEmpty)
+                    Stack(
+                      children: [
+                        Container(
+                          width: double.infinity,
+                          height: imageHeight,
+                          color: Colors.grey[200], // фон на случай ошибки загрузки
+                          child: Image.network(
+                            infoImage,
+                            width: double.infinity,
+                            height: imageHeight,
+                            fit: BoxFit.contain,          // без обрезки, без искажений
+                            errorBuilder: (context, error, stackTrace) => Container(
+                              height: imageHeight,
+                              color: Colors.grey[200],
+                              alignment: Alignment.center,
+                              child: Text(shop.icon, style: const TextStyle(fontSize: 48)),
+                            ),
+                          ),
+                        ),
+                        Positioned(
+                          top: 8,
+                          right: 8,
+                          child: Material(
+                            color: Colors.transparent,
+                            child: InkWell(
+                              borderRadius: BorderRadius.circular(16),
+                              onTap: () => Navigator.pop(ctx),
+                              child: Container(
+                                padding: const EdgeInsets.all(6),
+                                decoration: const BoxDecoration(
+                                  color: Colors.black45,
+                                  shape: BoxShape.circle,
+                                ),
+                                child: const Icon(Icons.close, color: Colors.white, size: 18),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(shop.name, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                        if (shop.description.isNotEmpty) ...[
+                          const SizedBox(height: 8),
+                          Text(shop.description, style: const TextStyle(fontSize: 14, height: 1.3)),
+                        ],
+                        if (shop.discount.isNotEmpty) ...[
+                          const SizedBox(height: 12),
+                          Container(
+                            padding: const EdgeInsets.all(10),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF6C63FF).withOpacity(0.1),
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            child: Row(
+                              children: [
+                                const Icon(Icons.local_offer, color: Color(0xFF6C63FF), size: 18),
+                                const SizedBox(width: 6),
+                                Expanded(
+                                  child: Text(
+                                    shop.discount,
+                                    style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: Color(0xFF6C63FF)),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                        if (shop.location.isNotEmpty) ...[
+                          const SizedBox(height: 8),
+                          Row(
+                            children: [
+                              const Icon(Icons.location_on, size: 14, color: Colors.grey),
+                              const SizedBox(width: 4),
+                              Expanded(child: Text(shop.location, style: TextStyle(fontSize: 12, color: Colors.grey[600]))),
+                            ],
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
+  // ----- Остальные методы (логика квеста) -----
   Future<void> _showLocationPicker({bool isChanging = false}) async {
     final Map<String, List<Map<String, String>>> citiesAndMalls = {
       'Москва': [
@@ -1260,6 +1469,7 @@ class _DealsGameScreenState extends State<DealsGameScreen> {
               } catch (e) {
                 print('❌ Ошибка в коллаборации: $e');
               }
+              await _checkBonuses('collab_activated', currentShop: shop);
             }
             await _activateShop(shop);
           },
@@ -1302,7 +1512,6 @@ class _DealsGameScreenState extends State<DealsGameScreen> {
       'timestamp': FieldValue.serverTimestamp(),
     });
 
-    // Проверка бонусов за завершение шага
     await _checkBonuses('step_completed', currentShop: shop);
 
     if (_completedSteps == _totalSteps) {
@@ -1312,92 +1521,88 @@ class _DealsGameScreenState extends State<DealsGameScreen> {
     }
   }
 
- Future<void> _startNewCycle() async {
-  final newCycleCount = _cycleCount + 1;
-  // Сохраняем новый цикл в Firestore
-  await _firestore.collection('user_progress').doc(_userId).update({
-    'cycleCount': newCycleCount,
-    'completedSteps': 0,
-    'usedShopIds': [],
-    'pendingForkShops': [],
-    'lastShopId': null,
-  });
+  Future<void> _startNewCycle() async {
+    final newCycleCount = _cycleCount + 1;
+    await _firestore.collection('user_progress').doc(_userId).update({
+      'cycleCount': newCycleCount,
+      'completedSteps': 0,
+      'usedShopIds': [],
+      'pendingForkShops': [],
+      'lastShopId': null,
+      'isPathActive': true,
+    });
 
-  setState(() {
-    _completedSteps = 0;
-    _usedShopIds.clear();
-    _cycleCount = newCycleCount;
-    _isPathActive = true;
-    _pendingForkShops = null;
-    _lastShop = null;
-    _lastShopId = null;
-  });
+    setState(() {
+      _completedSteps = 0;
+      _usedShopIds.clear();
+      _cycleCount = newCycleCount;
+      _isPathActive = true;
+      _pendingForkShops = null;
+      _lastShop = null;
+      _lastShopId = null;
+    });
 
-  if (!mounted) return;
+    if (!mounted) return;
 
-  // Проверяем и начисляем бонусы за завершение цикла
-  await _checkBonuses('cycle_completed');
+    await _checkBonuses('cycle_completed');
+  }
 
-  // Сразу предлагаем начать новый путь
-  _showFirstChoice();
-}
+ Future<void> _showQRDialog(Shop shop) async {
+  final userDoc = await _firestore.collection('user_progress').doc(_userId).get();
+  final subscribedShops = List<String>.from(userDoc.data()?['subscribedShops'] ?? []);
+  final isSubscribed = subscribedShops.contains(shop.id);
 
-  Future<void> _showQRDialog(Shop shop) async {
-    final userDoc = await _firestore.collection('user_progress').doc(_userId).get();
-    final subscribedShops = List<String>.from(userDoc.data()?['subscribedShops'] ?? []);
-    final isSubscribed = subscribedShops.contains(shop.id);
+  // Краткая скидка (если есть) или полная
+  final String discountText = shop.shortDiscount.isNotEmpty ? shop.shortDiscount : shop.discount;
 
-    await showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => AlertDialog(
-        title: Text(shop.name),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(Icons.qr_code_scanner_rounded, size: 120, color: Color(0xFF6C63FF)),
-            const SizedBox(height: 16),
-            Text(shop.discount, style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 8),
-            Text(shop.description, textAlign: TextAlign.center),
-            const SizedBox(height: 16),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(isSubscribed ? Icons.notifications_active : Icons.notifications_off, color: Colors.grey),
-                const SizedBox(width: 8),
-                TextButton(
-                  onPressed: () async {
-                    List<String> newSubscribed;
-                    if (isSubscribed) {
-                      newSubscribed = subscribedShops.where((id) => id != shop.id).toList();
-                    } else {
-                      newSubscribed = [...subscribedShops, shop.id];
-                    }
-                    await _firestore.collection('user_progress').doc(_userId).update({
-                      'subscribedShops': newSubscribed,
-                    });
-                    if (mounted) Navigator.pop(context);
-                    _showQRDialog(shop);
-                  },
-                  style: TextButton.styleFrom(foregroundColor: Colors.black87),
-                  child: Text(isSubscribed ? 'Отписаться от уведомлений' : 'Подписаться на акции'),
-                ),
-              ],
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            style: TextButton.styleFrom(foregroundColor: Colors.black87),
-            child: const Text('Закрыть'),
+  await showDialog(
+    context: context,
+    barrierDismissible: false,
+    builder: (context) => AlertDialog(
+      title: Text(shop.name),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(Icons.qr_code_scanner_rounded, size: 120, color: Color(0xFF6C63FF)),
+          const SizedBox(height: 16),
+          Text(discountText, style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
+          const SizedBox(height: 16),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(isSubscribed ? Icons.notifications_active : Icons.notifications_off, color: Colors.grey),
+              const SizedBox(width: 8),
+              TextButton(
+                onPressed: () async {
+                  List<String> newSubscribed;
+                  if (isSubscribed) {
+                    newSubscribed = subscribedShops.where((id) => id != shop.id).toList();
+                  } else {
+                    newSubscribed = [...subscribedShops, shop.id];
+                  }
+                  await _firestore.collection('user_progress').doc(_userId).update({
+                    'subscribedShops': newSubscribed,
+                  });
+                  if (mounted) Navigator.pop(context);
+                  _showQRDialog(shop);
+                },
+                style: TextButton.styleFrom(foregroundColor: Colors.black87),
+                child: Text(isSubscribed ? 'Отписаться от уведомлений' : 'Подписаться на акции'),
+              ),
+            ],
           ),
         ],
       ),
-    );
-  }
-
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          style: TextButton.styleFrom(foregroundColor: Colors.black87),
+          child: const Text('Закрыть'),
+        ),
+      ],
+    ),
+  );
+}
   Future<void> _showFirstChoice() async {
     if (_allShops.isEmpty) return;
     var available = _allShops.where((s) => !_usedShopIds.contains(s.id)).toList();
@@ -1522,9 +1727,17 @@ class _DealsGameScreenState extends State<DealsGameScreen> {
             Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                _PendingShopButton(shop: _pendingForkShops![0], onTap: _activateShop),
+                _PendingShopButton(
+                  shop: _pendingForkShops![0],
+                  onTap: _activateShop,
+                  onInfoTap: () => _showShopInfo(_pendingForkShops![0]),
+                ),
                 const SizedBox(width: 20),
-                _PendingShopButton(shop: _pendingForkShops![1], onTap: _activateShop),
+                _PendingShopButton(
+                  shop: _pendingForkShops![1],
+                  onTap: _activateShop,
+                  onInfoTap: () => _showShopInfo(_pendingForkShops![1]),
+                ),
               ],
             ),
             const SizedBox(height: 32),
@@ -1595,7 +1808,11 @@ class _DealsGameScreenState extends State<DealsGameScreen> {
             alignment: WrapAlignment.center,
             spacing: 16,
             runSpacing: 16,
-            children: _allShops.map((shop) => _ShopCard(shop: shop, onTap: _activateShop)).toList(),
+            children: _allShops.map((shop) => _ShopCard(
+              shop: shop,
+              onTap: _activateShop,
+              onInfoTap: () => _showShopInfo(shop),
+            )).toList(),
           ),
           const SizedBox(height: 24),
           ElevatedButton(
@@ -1732,7 +1949,6 @@ class _DealsGameScreenState extends State<DealsGameScreen> {
   }
 }
 
-// ----- ЭКРАН ПРОФИЛЯ (с настройками пушей и подписками) -----
 // ----- ЭКРАН ПРОФИЛЯ (адаптирован под универсальные бонусы) -----
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
@@ -1795,7 +2011,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
     _loadSubscribedShops();
   }
 
-  // Загружаем сами документы правил (не только ID)
   Future<List<QueryDocumentSnapshot>> _getPendingBonuses() async {
     final userDoc = await _firestore.collection('user_progress').doc(_userId).get();
     final pendingIds = List<String>.from(userDoc.data()?['pendingBonuses'] ?? []);
@@ -1807,14 +2022,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
     return snapshot.docs;
   }
 
-  // Обновлённый метод получения бонуса – теперь принимает reward (map)
   Future<void> _claimBonus(String ruleId, Map<String, dynamic> rewardData) async {
     final targetShopId = rewardData['targetShopId'] as String? ?? '';
     final bonusDescription = rewardData['title'] as String? ?? 'Бонус';
     final message = rewardData['message'] as String? ?? '';
     final icon = rewardData['icon'] as String? ?? '🎁';
 
-    // Если есть targetShopId – показываем QR с магазином
     if (targetShopId.isNotEmpty) {
       final shopDoc = await _firestore.collection('shops').doc(targetShopId).get();
       if (shopDoc.exists) {
@@ -1845,7 +2058,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
         );
       }
     } else {
-      // Бонус без конкретного магазина (например, значок)
       showDialog(
         context: context,
         builder: (_) => AlertDialog(
@@ -1854,20 +2066,20 @@ class _ProfileScreenState extends State<ProfileScreen> {
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(context),
-              child: const Text('OK'),
+              style: TextButton.styleFrom(foregroundColor: Colors.black87),
+              child: const Text('Закрыть'),
             ),
           ],
         ),
       );
     }
 
-    // Удаляем из pending, добавляем в claimed
     await _firestore.collection('user_progress').doc(_userId).update({
       'pendingBonuses': FieldValue.arrayRemove([ruleId]),
       'claimedBonuses': FieldValue.arrayUnion([ruleId]),
     });
 
-    setState(() {}); // обновляем список бонусов
+    setState(() {});
   }
 
   @override
