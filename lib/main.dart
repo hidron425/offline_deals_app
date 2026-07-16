@@ -617,7 +617,6 @@ class _ShopCardState extends State<_ShopCard> {
 
   @override
   Widget build(BuildContext context) {
-    // 👇 ВСЕГДА проверяем shortDiscount, иначе discount
     final String cardDiscount = widget.shop.shortDiscount.isNotEmpty
         ? widget.shop.shortDiscount
         : widget.shop.discount;
@@ -633,7 +632,6 @@ class _ShopCardState extends State<_ShopCard> {
           transform: _isHovered ? Matrix4.translationValues(0, -6, 0) : Matrix4.identity(),
           child: Container(
             width: 130,
-            height: 150,
             decoration: BoxDecoration(
               color: Colors.white.withOpacity(0.95),
               borderRadius: BorderRadius.circular(24),
@@ -643,82 +641,83 @@ class _ShopCardState extends State<_ShopCard> {
             ),
             child: ClipRRect(
               borderRadius: BorderRadius.circular(24),
-              child: Stack(
-                fit: StackFit.expand,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  if (widget.shop.imageUrl.isNotEmpty)
-                    Image.network(
-                      widget.shop.imageUrl,
-                      fit: BoxFit.cover,
-                      errorBuilder: (context, error, stackTrace) => Container(
-                        color: Colors.grey[100],
-                        child: Center(child: Text(widget.shop.icon, style: const TextStyle(fontSize: 48))),
-                      ),
-                    )
-                  else
-                    Container(
-                      color: Colors.grey[100],
-                      child: Center(child: Text(widget.shop.icon, style: const TextStyle(fontSize: 48))),
-                    ),
-                  // Иконка информации
-                  if (widget.onInfoTap != null)
-                    Positioned(
-                      top: 4,
-                      right: 4,
-                      child: MouseRegion(
-                        onEnter: (_) => setState(() => _infoHovered = true),
-                        onExit: (_) => setState(() => _infoHovered = false),
-                        child: GestureDetector(
-                          onTap: widget.onInfoTap,
-                          child: AnimatedContainer(
-                            duration: const Duration(milliseconds: 200),
-                            padding: const EdgeInsets.all(4),
-                            decoration: BoxDecoration(
-                              color: _infoHovered ? Colors.black87 : Colors.black54,
-                              shape: BoxShape.circle,
-                            ),
-                            child: Icon(
-                              Icons.info_outline,
-                              size: _infoHovered ? 14 : 12,
-                              color: Colors.white,
+                  // Изображение с иконкой информации
+                  Stack(
+                    children: [
+                      if (widget.shop.imageUrl.isNotEmpty)
+                        Image.network(
+                          widget.shop.imageUrl,
+                          width: double.infinity,
+                          height: 100,
+                          fit: BoxFit.cover,
+                          errorBuilder: (context, error, stackTrace) => Container(
+                            height: 100,
+                            color: Colors.grey[100],
+                            child: Center(child: Text(widget.shop.icon, style: const TextStyle(fontSize: 48))),
+                          ),
+                        )
+                      else
+                        Container(
+                          height: 100,
+                          color: Colors.grey[100],
+                          child: Center(child: Text(widget.shop.icon, style: const TextStyle(fontSize: 48))),
+                        ),
+                      // Иконка информации
+                      if (widget.onInfoTap != null)
+                        Positioned(
+                          top: 4,
+                          right: 4,
+                          child: MouseRegion(
+                            onEnter: (_) => setState(() => _infoHovered = true),
+                            onExit: (_) => setState(() => _infoHovered = false),
+                            child: GestureDetector(
+                              onTap: widget.onInfoTap,
+                              child: AnimatedContainer(
+                                duration: const Duration(milliseconds: 200),
+                                padding: const EdgeInsets.all(4),
+                                decoration: BoxDecoration(
+                                  color: _infoHovered ? Colors.black87 : Colors.black54,
+                                  shape: BoxShape.circle,
+                                ),
+                                child: Icon(
+                                  Icons.info_outline,
+                                  size: _infoHovered ? 14 : 12,
+                                  color: Colors.white,
+                                ),
+                              ),
                             ),
                           ),
                         ),
-                      ),
+                    ],
+                  ),
+                  // Нижняя плашка с названием и скидкой
+                  Container(
+                    padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 6),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(0.85),
                     ),
-                  // Нижняя плашка с названием и КРАТКОЙ скидкой
-                  Positioned(
-                    left: 0,
-                    right: 0,
-                    bottom: 0,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 6),
-                      decoration: BoxDecoration(
-                        color: Colors.white.withOpacity(0.9),
-                        borderRadius: const BorderRadius.only(
-                          bottomLeft: Radius.circular(24),
-                          bottomRight: Radius.circular(24),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          widget.shop.name,
+                          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
+                          textAlign: TextAlign.center,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                         ),
-                      ),
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
+                        const SizedBox(height: 2),
+                        if (cardDiscount.isNotEmpty)
                           Text(
-                            widget.shop.name,
-                            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
+                            cardDiscount,
+                            style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: Colors.green),
                             textAlign: TextAlign.center,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
                           ),
-                          const SizedBox(height: 2),
-                          if (cardDiscount.isNotEmpty)
-                            Text(
-                              cardDiscount,
-                              style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: Colors.green),
-                              textAlign: TextAlign.center,
-                            ),
-                        ],
-                      ),
+                      ],
                     ),
                   ),
                 ],
@@ -768,7 +767,6 @@ class _PendingShopButtonState extends State<_PendingShopButton> {
           transform: _isHovered ? Matrix4.translationValues(0, -6, 0) : Matrix4.identity(),
           child: Container(
             width: 140,
-            padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
               color: Colors.white.withOpacity(0.95),
               borderRadius: BorderRadius.circular(28),
@@ -776,44 +774,186 @@ class _PendingShopButtonState extends State<_PendingShopButton> {
                   ? [BoxShadow(color: Colors.black.withOpacity(0.2), blurRadius: 12, offset: const Offset(0, 8))]
                   : [BoxShadow(color: Colors.black.withOpacity(0.1), blurRadius: 6, offset: const Offset(0, 2))],
             ),
-            child: Stack(
-              children: [
-                Column(
-                  children: [
-                    if (widget.shop.imageUrl.isNotEmpty)
-                      Image.network(widget.shop.imageUrl, width: 80, height: 80, fit: BoxFit.cover)
-                    else
-                      Text(widget.shop.icon, style: const TextStyle(fontSize: 48)),
-                    const SizedBox(height: 8),
-                    Text(widget.shop.name, style: const TextStyle(fontWeight: FontWeight.bold)),
-                    const SizedBox(height: 4),
-                    if (cardDiscount.isNotEmpty)
-                      Text(cardDiscount, style: const TextStyle(fontWeight: FontWeight.w600, color: Colors.green)),
-                  ],
-                ),
-                if (widget.onInfoTap != null)
-                  Positioned(
-                    top: 0,
-                    right: 0,
-                    child: MouseRegion(
-                      onEnter: (_) => setState(() => _infoHovered = true),
-                      onExit: (_) => setState(() => _infoHovered = false),
-                      child: GestureDetector(
-                        onTap: widget.onInfoTap,
-                        child: AnimatedContainer(
-                          duration: const Duration(milliseconds: 200),
-                          padding: const EdgeInsets.all(4),
-                          decoration: BoxDecoration(
-                            color: _infoHovered ? Colors.black87 : Colors.black54,
-                            shape: BoxShape.circle,
-                          ),
-                          child: Icon(
-                            Icons.info_outline,
-                            size: _infoHovered ? 14 : 12,
-                            color: Colors.white,
-                          ),
-                        ),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(28),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  // Изображение на всю ширину, высота 100
+                  if (widget.shop.imageUrl.isNotEmpty)
+                    Image.network(
+                      widget.shop.imageUrl,
+                      width: double.infinity,
+                      height: 100,
+                      fit: BoxFit.cover,
+                      errorBuilder: (context, error, stackTrace) => Container(
+                        height: 100,
+                        color: Colors.grey[100],
+                        child: Center(child: Text(widget.shop.icon, style: const TextStyle(fontSize: 48))),
                       ),
+                    )
+                  else
+                    Container(
+                      height: 100,
+                      color: Colors.grey[100],
+                      child: Center(child: Text(widget.shop.icon, style: const TextStyle(fontSize: 48))),
+                    ),
+                  // Текстовая часть
+                  Container(
+                    padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 6),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(0.85),
+                    ),
+                    child: Column(
+                      children: [
+                        Text(
+                          widget.shop.name,
+                          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                          textAlign: TextAlign.center,
+                        ),
+                        const SizedBox(height: 4),
+                        if (cardDiscount.isNotEmpty)
+                          Text(
+                            cardDiscount,
+                            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Colors.green),
+                            textAlign: TextAlign.center,
+                          ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// Вставьте в main.dart, например, перед class DealsGameScreen...
+class _ChoiceButton extends StatefulWidget {
+  final Shop shop;
+  final Function(Shop) onTap;
+  final bool isCollab;
+  final String? collabDocId;
+  final Future<void> Function(String, Shop) onCollabActivated;
+
+  const _ChoiceButton({
+    required this.shop,
+    required this.onTap,
+    this.isCollab = false,
+    this.collabDocId,
+    required this.onCollabActivated,
+  });
+
+  @override
+  State<_ChoiceButton> createState() => _ChoiceButtonState();
+}
+
+class _ChoiceButtonState extends State<_ChoiceButton> {
+  bool _isHovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final String discountText = widget.shop.shortDiscount.isNotEmpty
+        ? widget.shop.shortDiscount
+        : widget.shop.discount;
+
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      onEnter: (_) => setState(() => _isHovered = true),
+      onExit: (_) => setState(() => _isHovered = false),
+      child: GestureDetector(
+        onTap: () async {
+          // ✅ Закрываем диалог выбора пути
+          Navigator.pop(context);
+
+          if (widget.isCollab && widget.collabDocId != null) {
+            final firestore = FirebaseFirestore.instance;
+            final collabRef = firestore.collection('active_collabs').doc(widget.collabDocId);
+            try {
+              final collabDoc = await collabRef.get();
+              if (collabDoc.exists) {
+                final data = collabDoc.data()!;
+                final currentClicks = (data['clicks'] as int?) ?? 0;
+                await collabRef.update({'clicks': currentClicks + 1});
+
+                final offerId = data['offerId'] as String?;
+                final bid = data['bid'] as int?;
+                if (offerId != null && bid != null && bid > 0) {
+                  final offerRef = firestore.collection('auction_offers').doc(offerId);
+                  final offerDoc = await offerRef.get();
+                  if (offerDoc.exists) {
+                    final offerData = offerDoc.data()!;
+                    final remaining = offerData['remainingBudget'] as int? ?? 0;
+                    if (remaining >= bid) {
+                      final newRemaining = remaining - bid;
+                      await offerRef.update({'remainingBudget': newRemaining});
+                      if (newRemaining <= 0) {
+                        await offerRef.update({'status': 'exhausted'});
+                        await collabRef.delete();
+                      }
+                    } else {
+                      await collabRef.delete();
+                    }
+                  }
+                }
+              }
+            } catch (e) {
+              print('❌ Ошибка в коллаборации: $e');
+            }
+            await widget.onCollabActivated('collab_activated', widget.shop);
+          }
+          // Активируем выбранный магазин
+          widget.onTap(widget.shop);
+        },
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
+          transform: _isHovered ? Matrix4.translationValues(0, -6, 0) : Matrix4.identity(),
+          child: Container(
+            width: 130,
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: widget.isCollab ? Colors.orange.shade50 : Colors.white,
+              borderRadius: BorderRadius.circular(24),
+              border: Border.all(
+                color: widget.isCollab ? Colors.orange : const Color(0xFF6C63FF).withOpacity(0.3),
+                width: 1.5,
+              ),
+              boxShadow: _isHovered
+                  ? [BoxShadow(color: Colors.black.withOpacity(0.2), blurRadius: 12, offset: const Offset(0, 8))]
+                  : [BoxShadow(color: Colors.black.withOpacity(0.08), blurRadius: 8, offset: const Offset(0, 2))],
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (widget.shop.imageUrl.isNotEmpty)
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(12),
+                    child: Image.network(widget.shop.imageUrl, height: 70, width: 70, fit: BoxFit.cover),
+                  )
+                else
+                  Text(widget.shop.icon, style: const TextStyle(fontSize: 40)),
+                const SizedBox(height: 8),
+                Text(
+                  widget.shop.name,
+                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                  textAlign: TextAlign.center,
+                ),
+                if (widget.isCollab)
+                  const Padding(
+                    padding: EdgeInsets.only(top: 4),
+                    child: Text('🎁 Спецпредложение!', style: TextStyle(fontSize: 10, color: Colors.deepOrange)),
+                  ),
+                if (discountText.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 4),
+                    child: Text(
+                      discountText,
+                      style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: Colors.green),
+                      textAlign: TextAlign.center,
                     ),
                   ),
               ],
@@ -1359,138 +1499,158 @@ void _showShopInfo(Shop shop) {
     }
   }
 
-  Future<void> _showForkDialog(Shop currentShop) async {
-    final nextShops = _getNextTwoShops(currentShop);
-    if (nextShops.length < 2) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Нет доступных магазинов для продолжения пути. Сбросьте прогресс.')),
-        );
-      }
-      return;
+ Future<void> _showForkDialog(Shop currentShop) async {
+  final nextShops = _getNextTwoShops(currentShop);
+
+  final collab = await _getActiveCollab(currentShop);
+  final hasCollab = collab != null;
+  final toShop = hasCollab ? collab!['toShop'] as Shop : null;
+  final collabDocId = hasCollab ? collab!['collabDocId'] as String : null;
+
+  // Убираем toShop из обычных вариантов, если он там есть (чтобы не дублировался)
+  if (hasCollab) {
+    nextShops.removeWhere((shop) => shop.id == toShop!.id);
+  }
+
+  // Если нет ни одного варианта и нет коллаборации
+  if (nextShops.isEmpty && !hasCollab) {
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Нет доступных магазинов для продолжения. Сбросьте прогресс.')),
+      );
     }
+    return;
+  }
 
-    final collab = await _getActiveCollab(currentShop);
-    final hasCollab = collab != null;
-    final toShop = hasCollab ? collab!['toShop'] as Shop : null;
-    final collabDocId = hasCollab ? collab!['collabDocId'] as String : null;
-
-    await showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => AlertDialog(
-        title: const Text('Выбери путь дальше'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text('Вы получили скидку в ${currentShop.name}. Куда отправимся дальше?'),
-            const SizedBox(height: 16),
-            hasCollab
-                ? Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                    children: [
-                      _forkButton(nextShops[0], isCollab: false),
-                      _forkButton(nextShops[1], isCollab: false),
-                      _forkButton(toShop!, isCollab: true, collabDocId: collabDocId),
-                    ],
-                  )
-                : Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                    children: [
-                      _forkButton(nextShops[0], isCollab: false),
-                      _forkButton(nextShops[1], isCollab: false),
-                    ],
-                  ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () {
-              Navigator.pop(context);
-              setState(() {
-                _pendingForkShops = nextShops;
-                _isPathActive = true;
-                _lastShopId = currentShop.id;
-                _lastShop = currentShop;
-              });
-              _saveProgress();
-            },
-            style: TextButton.styleFrom(foregroundColor: Colors.black87),
-            child: const Text('Закончить путь (продолжить позже)'),
-          ),
-          TextButton(
-            onPressed: () async {
-              Navigator.pop(context);
-              await _resetProgress();
-            },
-            style: TextButton.styleFrom(foregroundColor: Colors.black87),
-            child: const Text('Сбросить путь'),
+  await showDialog(
+    context: context,
+    barrierDismissible: false,
+    builder: (context) => AlertDialog(
+      title: const Text('Выбери путь дальше'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text('Вы получили скидку в ${currentShop.name}. Куда отправимся дальше?'),
+          const SizedBox(height: 16),
+          // Кнопки выбора
+          Wrap(
+            spacing: 16,
+            runSpacing: 12,
+            alignment: WrapAlignment.center,
+            children: [
+              // Обычные варианты
+              for (final shop in nextShops)
+                _ChoiceButton(
+                  shop: shop,
+                  onTap: _activateShop,
+                  isCollab: false,
+                  onCollabActivated: (trigger, shop) => _checkBonuses(trigger, currentShop: shop),
+                ),
+              // Спецпредложение (если есть)
+              if (hasCollab)
+                _ChoiceButton(
+                  shop: toShop!,
+                  onTap: _activateShop,
+                  isCollab: true,
+                  collabDocId: collabDocId,
+                  onCollabActivated: (trigger, shop) => _checkBonuses(trigger, currentShop: shop),
+                ),
+            ],
           ),
         ],
       ),
-    );
-  }
-
-  Widget _forkButton(Shop shop, {required bool isCollab, String? collabDocId}) {
-    return Expanded(
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 8),
-        child: ElevatedButton(
+      actions: [
+        TextButton(
+          onPressed: () {
+            Navigator.pop(context);
+            setState(() {
+              _pendingForkShops = nextShops.isNotEmpty ? nextShops : null;
+              _isPathActive = true;
+              _lastShopId = currentShop.id;
+              _lastShop = currentShop;
+            });
+            _saveProgress();
+          },
+          style: TextButton.styleFrom(foregroundColor: Colors.black87),
+          child: const Text('Закончить путь (продолжить позже)'),
+        ),
+        TextButton(
           onPressed: () async {
             Navigator.pop(context);
-            if (isCollab && collabDocId != null) {
-              final collabRef = _firestore.collection('active_collabs').doc(collabDocId);
-              try {
-                final collabDoc = await collabRef.get();
-                if (!collabDoc.exists) return;
-                final data = collabDoc.data()!;
-                final currentClicks = (data['clicks'] as int?) ?? 0;
-                await collabRef.update({'clicks': currentClicks + 1});
+            await _resetProgress();
+          },
+          style: TextButton.styleFrom(foregroundColor: Colors.black87),
+          child: const Text('Сбросить путь'),
+        ),
+      ],
+    ),
+  );
+}
 
-                final offerId = data['offerId'] as String?;
-                final bid = data['bid'] as int?;
-                if (offerId != null && bid != null && bid > 0) {
-                  final offerRef = _firestore.collection('auction_offers').doc(offerId);
-                  final offerDoc = await offerRef.get();
-                  if (!offerDoc.exists) return;
-                  final offerData = offerDoc.data()!;
-                  final remaining = offerData['remainingBudget'] as int? ?? 0;
-                  if (remaining >= bid) {
-                    final newRemaining = remaining - bid;
-                    await offerRef.update({'remainingBudget': newRemaining});
-                    if (newRemaining <= 0) {
-                      await offerRef.update({'status': 'exhausted'});
-                      await collabRef.delete();
-                    }
-                  } else {
+  Widget _forkButton(Shop shop, {required bool isCollab, String? collabDocId}) {
+  // Краткая скидка, если есть, иначе полная
+  final String discountText = shop.shortDiscount.isNotEmpty ? shop.shortDiscount : shop.discount;
+
+  return Expanded(
+    child: Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 8),
+      child: ElevatedButton(
+        onPressed: () async {
+          Navigator.pop(context);
+          if (isCollab && collabDocId != null) {
+            final collabRef = _firestore.collection('active_collabs').doc(collabDocId);
+            try {
+              final collabDoc = await collabRef.get();
+              if (!collabDoc.exists) return;
+              final data = collabDoc.data()!;
+              final currentClicks = (data['clicks'] as int?) ?? 0;
+              await collabRef.update({'clicks': currentClicks + 1});
+
+              final offerId = data['offerId'] as String?;
+              final bid = data['bid'] as int?;
+              if (offerId != null && bid != null && bid > 0) {
+                final offerRef = _firestore.collection('auction_offers').doc(offerId);
+                final offerDoc = await offerRef.get();
+                if (!offerDoc.exists) return;
+                final offerData = offerDoc.data()!;
+                final remaining = offerData['remainingBudget'] as int? ?? 0;
+                if (remaining >= bid) {
+                  final newRemaining = remaining - bid;
+                  await offerRef.update({'remainingBudget': newRemaining});
+                  if (newRemaining <= 0) {
+                    await offerRef.update({'status': 'exhausted'});
                     await collabRef.delete();
                   }
+                } else {
+                  await collabRef.delete();
                 }
-              } catch (e) {
-                print('❌ Ошибка в коллаборации: $e');
               }
-              await _checkBonuses('collab_activated', currentShop: shop);
+            } catch (e) {
+              print('❌ Ошибка в коллаборации: $e');
             }
-            await _activateShop(shop);
-          },
-          style: ElevatedButton.styleFrom(
-            backgroundColor: isCollab ? Colors.orange : Colors.white,
-            foregroundColor: isCollab ? Colors.white : const Color(0xFF6C63FF),
-            padding: const EdgeInsets.symmetric(vertical: 12),
-          ),
-          child: Column(
-            children: [
-              Text(shop.icon, style: const TextStyle(fontSize: 32)),
-              const SizedBox(height: 4),
-              Text(shop.name, style: const TextStyle(fontSize: 14)),
-              if (isCollab) const Text('🎁 Спецпредложение!', style: TextStyle(fontSize: 10)),
-              Text(shop.discount, style: const TextStyle(fontSize: 12)),
-            ],
-          ),
+            await _checkBonuses('collab_activated', currentShop: shop);
+          }
+          await _activateShop(shop);
+        },
+        style: ElevatedButton.styleFrom(
+          backgroundColor: isCollab ? Colors.orange : Colors.white,
+          foregroundColor: isCollab ? Colors.white : const Color(0xFF6C63FF),
+          padding: const EdgeInsets.symmetric(vertical: 12),
+        ),
+        child: Column(
+          children: [
+            Text(shop.icon, style: const TextStyle(fontSize: 32)),
+            const SizedBox(height: 4),
+            Text(shop.name, style: const TextStyle(fontSize: 14)),
+            if (isCollab) const Text('🎁 Спецпредложение!', style: TextStyle(fontSize: 10)),
+            // 👇 Здесь теперь краткая скидка
+            Text(discountText, style: const TextStyle(fontSize: 12)),
+          ],
         ),
       ),
-    );
-  }
+    ),
+  );
+}
 
   Future<void> _activateShop(Shop shop) async {
     if (_usedShopIds.contains(shop.id)) return;
@@ -1947,7 +2107,109 @@ void _showShopInfo(Shop shop) {
       ],
     );
   }
+Widget _ShopChoiceButton({
+  required Shop shop,
+  required Function(Shop) onTap,
+  bool isCollab = false,
+  String? collabDocId,
+}) {
+  final String discountText = shop.shortDiscount.isNotEmpty ? shop.shortDiscount : shop.discount;
+
+  return GestureDetector(
+    onTap: () async {
+      // Логика коллаборации (если нужно)
+      if (isCollab && collabDocId != null) {
+        final collabRef = _firestore.collection('active_collabs').doc(collabDocId);
+        try {
+          final collabDoc = await collabRef.get();
+          if (collabDoc.exists) {
+            final data = collabDoc.data()!;
+            final currentClicks = (data['clicks'] as int?) ?? 0;
+            await collabRef.update({'clicks': currentClicks + 1});
+
+            final offerId = data['offerId'] as String?;
+            final bid = data['bid'] as int?;
+            if (offerId != null && bid != null && bid > 0) {
+              final offerRef = _firestore.collection('auction_offers').doc(offerId);
+              final offerDoc = await offerRef.get();
+              if (offerDoc.exists) {
+                final offerData = offerDoc.data()!;
+                final remaining = offerData['remainingBudget'] as int? ?? 0;
+                if (remaining >= bid) {
+                  final newRemaining = remaining - bid;
+                  await offerRef.update({'remainingBudget': newRemaining});
+                  if (newRemaining <= 0) {
+                    await offerRef.update({'status': 'exhausted'});
+                    await collabRef.delete();
+                  }
+                } else {
+                  await collabRef.delete();
+                }
+              }
+            }
+          }
+        } catch (e) {
+          print('❌ Ошибка в коллаборации: $e');
+        }
+        await _checkBonuses('collab_activated', currentShop: shop);
+      }
+      onTap(shop);
+    },
+    child: Container(
+      width: 130,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: isCollab ? Colors.orange.shade50 : Colors.white,
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(
+          color: isCollab ? Colors.orange : const Color(0xFF6C63FF).withOpacity(0.3),
+          width: 1.5,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.08),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (shop.imageUrl.isNotEmpty)
+            ClipRRect(
+              borderRadius: BorderRadius.circular(12),
+              child: Image.network(shop.imageUrl, height: 70, width: 70, fit: BoxFit.cover),
+            )
+          else
+            Text(shop.icon, style: const TextStyle(fontSize: 40)),
+          const SizedBox(height: 8),
+          Text(
+            shop.name,
+            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+            textAlign: TextAlign.center,
+          ),
+          if (isCollab)
+            const Padding(
+              padding: EdgeInsets.only(top: 4),
+              child: Text('🎁 Спецпредложение!', style: TextStyle(fontSize: 10, color: Colors.deepOrange)),
+            ),
+          if (discountText.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Text(
+                discountText,
+                style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: Colors.green),
+                textAlign: TextAlign.center,
+              ),
+            ),
+        ],
+      ),
+    ),
+  );
 }
+}
+
 
 // ----- ЭКРАН ПРОФИЛЯ (адаптирован под универсальные бонусы) -----
 class ProfileScreen extends StatefulWidget {
