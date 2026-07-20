@@ -6,6 +6,8 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'firebase_options.dart';
 import 'package:cloud_functions/cloud_functions.dart';
+import 'mall_map_screen.dart';
+import 'models.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -247,7 +249,7 @@ class _MainScreenState extends State<MainScreen> {
     super.initState();
     _screens = [
       const DealsGameScreen(),
-      const MapPlaceholder(),
+      const MallMapScreen(),
       const ProfileScreen(),
     ];
   }
@@ -274,92 +276,6 @@ class _MainScreenState extends State<MainScreen> {
           BottomNavigationBarItem(icon: Icon(Icons.person_outline), label: 'Профиль'),
         ],
       ),
-    );
-  }
-}
-
-// ----- МОДЕЛИ ДАННЫХ -----
-class Shop {
-  final String id;
-  final String name;
-  final String icon;
-  final String discount;
-  final String shortDiscount;
-  final String description;
-  final String location;
-  final String category;
-  final int priority;
-  final String mallId;
-  final String imageUrl;
-  final String infoImageUrl;
-
-  Shop({
-    required this.id,
-    required this.name,
-    required this.icon,
-    required this.discount,
-    this.shortDiscount = '',
-    required this.description,
-    required this.location,
-    required this.category,
-    required this.priority,
-    required this.mallId,
-    required this.imageUrl,
-     this.infoImageUrl = '',
-  });
-
-  factory Shop.fromFirestore(DocumentSnapshot doc) {
-    final data = doc.data() as Map<String, dynamic>;
-    return Shop(
-      id: doc.id,
-      name: data['name'] ?? 'Без названия',
-      icon: data['icon'] ?? '🛍️',
-      discount: data['discount'] ?? '',
-      shortDiscount: data['shortDiscount'] ?? '',
-      description: data['description'] ?? '',
-      location: data['location'] ?? '',
-      category: data['category'] ?? 'other',
-      priority: (data['priority'] as int?) ?? 1,
-      mallId: data['mallId'] ?? '',
-      imageUrl: data['imageUrl'] ?? '',
-      infoImageUrl: data['infoImageUrl'] ?? '',
-    );
-  }
-}
-
-class BannerAd {
-  final String title;
-  final String description;
-  final int color;
-  final String targetShopId;
-  final String discount;
-  final String mallId;
-
-  BannerAd({
-    required this.title,
-    required this.description,
-    required this.color,
-    required this.targetShopId,
-    required this.discount,
-    required this.mallId,
-  });
-
-  factory BannerAd.fromFirestore(DocumentSnapshot doc) {
-    final data = doc.data() as Map<String, dynamic>;
-    int colorInt = 0xFF6C63FF;
-    final colorStr = data['color'] as String?;
-    if (colorStr != null && colorStr.isNotEmpty) {
-      final hexCode = colorStr.replaceAll('#', '');
-      colorInt = int.parse(hexCode, radix: 16);
-      if (hexCode.length == 6) colorInt = 0xFF000000 | colorInt;
-    }
-    return BannerAd(
-      title: data['title'] ?? '',
-      description: data['description'] ?? '',
-      color: colorInt,
-      targetShopId: data['targetShopId'] ?? '',
-      discount: data['discount'] ?? '',
-      mallId: data['mallId'] ?? '',
     );
   }
 }
@@ -593,18 +509,18 @@ class _BannerItem extends StatelessWidget {
   }
 }
 
-// ----- КАРТОЧКА МАГАЗИНА (с иконкой информации) -----
-// ----- КАРТОЧКА МАГАЗИНА (с иконкой информации) -----
-// ----- КАРТОЧКА МАГАЗИНА (с иконкой информации) -----
+// ----- КАРТОЧКА МАГАЗИНА (с иконкой информации и наведением на карту) -----
 class _ShopCard extends StatefulWidget {
   final Shop shop;
   final Function(Shop) onTap;
   final VoidCallback? onInfoTap;
+  final ValueChanged<String?> onHover;   // для подсветки на карте
 
   const _ShopCard({
     required this.shop,
     required this.onTap,
     this.onInfoTap,
+    required this.onHover,
   });
 
   @override
@@ -623,8 +539,14 @@ class _ShopCardState extends State<_ShopCard> {
 
     return MouseRegion(
       cursor: SystemMouseCursors.click,
-      onEnter: (_) => setState(() => _isHovered = true),
-      onExit: (_) => setState(() => _isHovered = false),
+      onEnter: (_) {
+        setState(() => _isHovered = true);
+        widget.onHover(widget.shop.id);   // сообщаем ID для карты
+      },
+      onExit: (_) {
+        setState(() => _isHovered = false);
+        widget.onHover(null);
+      },
       child: GestureDetector(
         onTap: () => widget.onTap(widget.shop),
         child: AnimatedContainer(
@@ -730,16 +652,18 @@ class _ShopCardState extends State<_ShopCard> {
   }
 }
 
-// ----- КНОПКА ОТЛОЖЕННОГО МАГАЗИНА (с иконкой информации) -----
+// ----- КНОПКА ОТЛОЖЕННОГО МАГАЗИНА (с иконкой информации и наведением на карту) -----
 class _PendingShopButton extends StatefulWidget {
   final Shop shop;
   final Function(Shop) onTap;
   final VoidCallback? onInfoTap;
+  final ValueChanged<String?> onHover;   // для подсветки на карте
 
   const _PendingShopButton({
     required this.shop,
     required this.onTap,
     this.onInfoTap,
+    required this.onHover,
   });
 
   @override
@@ -758,8 +682,14 @@ class _PendingShopButtonState extends State<_PendingShopButton> {
 
     return MouseRegion(
       cursor: SystemMouseCursors.click,
-      onEnter: (_) => setState(() => _isHovered = true),
-      onExit: (_) => setState(() => _isHovered = false),
+      onEnter: (_) {
+        setState(() => _isHovered = true);
+        widget.onHover(widget.shop.id);
+      },
+      onExit: (_) {
+        setState(() => _isHovered = false);
+        widget.onHover(null);
+      },
       child: GestureDetector(
         onTap: () => widget.onTap(widget.shop),
         child: AnimatedContainer(
@@ -832,7 +762,7 @@ class _PendingShopButtonState extends State<_PendingShopButton> {
   }
 }
 
-// Вставьте в main.dart, например, перед class DealsGameScreen...
+// ----- КНОПКА ВЫБОРА В ДИАЛОГЕ (С АНИМАЦИЕЙ) -----
 class _ChoiceButton extends StatefulWidget {
   final Shop shop;
   final Function(Shop) onTap;
@@ -867,8 +797,7 @@ class _ChoiceButtonState extends State<_ChoiceButton> {
       onExit: (_) => setState(() => _isHovered = false),
       child: GestureDetector(
         onTap: () async {
-          // ✅ Закрываем диалог выбора пути
-          Navigator.pop(context);
+          Navigator.pop(context); // закрываем диалог
 
           if (widget.isCollab && widget.collabDocId != null) {
             final firestore = FirebaseFirestore.instance;
@@ -906,7 +835,6 @@ class _ChoiceButtonState extends State<_ChoiceButton> {
             }
             await widget.onCollabActivated('collab_activated', widget.shop);
           }
-          // Активируем выбранный магазин
           widget.onTap(widget.shop);
         },
         child: AnimatedContainer(
@@ -965,7 +893,7 @@ class _ChoiceButtonState extends State<_ChoiceButton> {
   }
 }
 
-// ----- ГЛАВНЫЙ ИГРОВОЙ ЭКРАН -----
+// ----- ГЛАВНЫЙ ИГРОВОЙ ЭКРАН (С БЕСКОНЕЧНЫМИ ЦИКЛАМИ, КАРТОЙ И ПОДСВЕТКОЙ) -----
 class DealsGameScreen extends StatefulWidget {
   const DealsGameScreen({super.key});
 
@@ -975,6 +903,7 @@ class DealsGameScreen extends StatefulWidget {
 
 class _DealsGameScreenState extends State<DealsGameScreen> {
   final _firestore = FirebaseFirestore.instance;
+  String? _hoveredShopId;   // ID магазина, на который наведён курсор
 
   int _completedSteps = 0;
   final int _totalSteps = 5;
@@ -1217,129 +1146,187 @@ class _DealsGameScreenState extends State<DealsGameScreen> {
   }
 
   // ----- ИНФОРМАЦИОННОЕ ОКНО МАГАЗИНА (вызывается по нажатию на "i") -----
-void _showShopInfo(Shop shop) {
-  final infoImage = (shop.infoImageUrl.isNotEmpty) ? shop.infoImageUrl : shop.imageUrl;
-  final screenWidth = MediaQuery.of(context).size.width;
-  final screenHeight = MediaQuery.of(context).size.height;
-  final containerWidth = screenWidth * 0.3;                 // 30% ширины экрана
-  final imageHeight = containerWidth * (720 / 960);         // точная высота под пропорции 4:3
+  void _showShopInfo(Shop shop) {
+    final infoImage = (shop.infoImageUrl.isNotEmpty) ? shop.infoImageUrl : shop.imageUrl;
+    final screenWidth = MediaQuery.of(context).size.width;
+    final screenHeight = MediaQuery.of(context).size.height;
+    final containerWidth = screenWidth * 0.3;
+    final imageHeight = containerWidth * (720 / 960);
 
-  showDialog(
-    context: context,
-    barrierDismissible: true,
-    builder: (ctx) => Center(
-      child: FractionallySizedBox(
-        widthFactor: 0.3,   // окно займёт 30% ширины экрана
-        child: ConstrainedBox(
-          constraints: BoxConstraints(maxHeight: screenHeight * 0.9),
-          child: Container(
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(28),
-            ),
-            clipBehavior: Clip.antiAlias,
-            child: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  if (infoImage.isNotEmpty)
-                    Stack(
-                      children: [
-                        Container(
-                          width: double.infinity,
-                          height: imageHeight,
-                          color: Colors.grey[200], // фон на случай ошибки загрузки
-                          child: Image.network(
-                            infoImage,
+    showDialog(
+      context: context,
+      barrierDismissible: true,
+      builder: (ctx) => Center(
+        child: FractionallySizedBox(
+          widthFactor: 0.3,
+          child: ConstrainedBox(
+            constraints: BoxConstraints(maxHeight: screenHeight * 0.9),
+            child: Container(
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(28),
+              ),
+              clipBehavior: Clip.antiAlias,
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    if (infoImage.isNotEmpty)
+                      Stack(
+                        children: [
+                          Container(
                             width: double.infinity,
                             height: imageHeight,
-                            fit: BoxFit.contain,          // без обрезки, без искажений
-                            errorBuilder: (context, error, stackTrace) => Container(
+                            color: Colors.grey[200],
+                            child: Image.network(
+                              infoImage,
+                              width: double.infinity,
                               height: imageHeight,
-                              color: Colors.grey[200],
-                              alignment: Alignment.center,
-                              child: Text(shop.icon, style: const TextStyle(fontSize: 48)),
-                            ),
-                          ),
-                        ),
-                        Positioned(
-                          top: 8,
-                          right: 8,
-                          child: Material(
-                            color: Colors.transparent,
-                            child: InkWell(
-                              borderRadius: BorderRadius.circular(16),
-                              onTap: () => Navigator.pop(ctx),
-                              child: Container(
-                                padding: const EdgeInsets.all(6),
-                                decoration: const BoxDecoration(
-                                  color: Colors.black45,
-                                  shape: BoxShape.circle,
-                                ),
-                                child: const Icon(Icons.close, color: Colors.white, size: 18),
+                              fit: BoxFit.contain,
+                              errorBuilder: (context, error, stackTrace) => Container(
+                                height: imageHeight,
+                                color: Colors.grey[200],
+                                alignment: Alignment.center,
+                                child: Text(shop.icon, style: const TextStyle(fontSize: 48)),
                               ),
                             ),
                           ),
-                        ),
-                      ],
-                    ),
-                  Padding(
-                    padding: const EdgeInsets.all(12),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(shop.name, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-                        if (shop.description.isNotEmpty) ...[
-                          const SizedBox(height: 8),
-                          Text(shop.description, style: const TextStyle(fontSize: 14, height: 1.3)),
-                        ],
-                        if (shop.discount.isNotEmpty) ...[
-                          const SizedBox(height: 12),
-                          Container(
-                            padding: const EdgeInsets.all(10),
-                            decoration: BoxDecoration(
-                              color: const Color(0xFF6C63FF).withOpacity(0.1),
-                              borderRadius: BorderRadius.circular(10),
-                            ),
-                            child: Row(
-                              children: [
-                                const Icon(Icons.local_offer, color: Color(0xFF6C63FF), size: 18),
-                                const SizedBox(width: 6),
-                                Expanded(
-                                  child: Text(
-                                    shop.discount,
-                                    style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: Color(0xFF6C63FF)),
+                          Positioned(
+                            top: 8,
+                            right: 8,
+                            child: Material(
+                              color: Colors.transparent,
+                              child: InkWell(
+                                borderRadius: BorderRadius.circular(16),
+                                onTap: () => Navigator.pop(ctx),
+                                child: Container(
+                                  padding: const EdgeInsets.all(6),
+                                  decoration: const BoxDecoration(
+                                    color: Colors.black45,
+                                    shape: BoxShape.circle,
                                   ),
+                                  child: const Icon(Icons.close, color: Colors.white, size: 18),
                                 ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    Padding(
+                      padding: const EdgeInsets.all(12),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(shop.name, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                          if (shop.description.isNotEmpty) ...[
+                            const SizedBox(height: 8),
+                            Text(shop.description, style: const TextStyle(fontSize: 14, height: 1.3)),
+                          ],
+                          if (shop.discount.isNotEmpty) ...[
+                            const SizedBox(height: 12),
+                            Container(
+                              padding: const EdgeInsets.all(10),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF6C63FF).withOpacity(0.1),
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              child: Row(
+                                children: [
+                                  const Icon(Icons.local_offer, color: Color(0xFF6C63FF), size: 18),
+                                  const SizedBox(width: 6),
+                                  Expanded(
+                                    child: Text(
+                                      shop.discount,
+                                      style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: Color(0xFF6C63FF)),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                          if (shop.location.isNotEmpty) ...[
+                            const SizedBox(height: 8),
+                            Row(
+                              children: [
+                                const Icon(Icons.location_on, size: 14, color: Colors.grey),
+                                const SizedBox(width: 4),
+                                Expanded(child: Text(shop.location, style: TextStyle(fontSize: 12, color: Colors.grey[600]))),
                               ],
                             ),
-                          ),
+                          ],
                         ],
-                        if (shop.location.isNotEmpty) ...[
-                          const SizedBox(height: 8),
-                          Row(
-                            children: [
-                              const Icon(Icons.location_on, size: 14, color: Colors.grey),
-                              const SizedBox(width: 4),
-                              Expanded(child: Text(shop.location, style: TextStyle(fontSize: 12, color: Colors.grey[600]))),
-                            ],
-                          ),
-                        ],
-                      ],
+                      ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
           ),
         ),
       ),
-    ),
-  );
-}
+    );
+  }
 
-  // ----- Остальные методы (логика квеста) -----
+  // ----- МИНИ-КАРТА НА ГЛАВНОМ ЭКРАНЕ (С ПОДСВЕТКОЙ) -----
+  Widget _buildInlineMap() {
+    return SizedBox(
+      height: 200,
+      child: InteractiveViewer(
+        minScale: 0.5,
+        maxScale: 2.0,
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            return Stack(
+              children: [
+                Image.asset(
+                  'assets/images/mall_map.png',
+                  width: constraints.maxWidth,
+                  height: constraints.maxHeight,
+                  fit: BoxFit.contain,
+                ),
+                ..._allShops.where((s) => s.mapX != null && s.mapY != null).map((shop) {
+                  final double x = shop.mapX! * constraints.maxWidth;
+                  final double y = shop.mapY! * constraints.maxHeight;
+                  final bool isHovered = _hoveredShopId == shop.id;
+                  return Positioned(
+                    left: x - (isHovered ? 20 : 15),
+                    top: y - (isHovered ? 20 : 15),
+                    child: GestureDetector(
+                      onTap: () => _showShopInfo(shop),
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 200),
+                        width: isHovered ? 40 : 30,
+                        height: isHovered ? 40 : 30,
+                        decoration: BoxDecoration(
+                          color: isHovered
+                              ? Colors.yellow.withOpacity(0.9)
+                              : const Color(0xFF6C63FF).withOpacity(0.8),
+                          shape: BoxShape.circle,
+                          border: Border.all(
+                            color: isHovered ? Colors.orange : Colors.white,
+                            width: isHovered ? 3 : 2,
+                          ),
+                        ),
+                        child: Center(
+                          child: Text(
+                            shop.icon,
+                            style: TextStyle(fontSize: isHovered ? 18 : 14),
+                          ),
+                        ),
+                      ),
+                    ),
+                  );
+                }).toList(),
+              ],
+            );
+          },
+        ),
+      ),
+    );
+  }
+
+  // ----- ОСТАЛЬНЫЕ МЕТОДЫ КВЕСТА (без изменений) -----
   Future<void> _showLocationPicker({bool isChanging = false}) async {
     final Map<String, List<Map<String, String>>> citiesAndMalls = {
       'Москва': [
@@ -1499,158 +1486,151 @@ void _showShopInfo(Shop shop) {
     }
   }
 
- Future<void> _showForkDialog(Shop currentShop) async {
-  final nextShops = _getNextTwoShops(currentShop);
+  Future<void> _showForkDialog(Shop currentShop) async {
+    final nextShops = _getNextTwoShops(currentShop);
 
-  final collab = await _getActiveCollab(currentShop);
-  final hasCollab = collab != null;
-  final toShop = hasCollab ? collab!['toShop'] as Shop : null;
-  final collabDocId = hasCollab ? collab!['collabDocId'] as String : null;
+    final collab = await _getActiveCollab(currentShop);
+    final hasCollab = collab != null;
+    final toShop = hasCollab ? collab!['toShop'] as Shop : null;
+    final collabDocId = hasCollab ? collab!['collabDocId'] as String : null;
 
-  // Убираем toShop из обычных вариантов, если он там есть (чтобы не дублировался)
-  if (hasCollab) {
-    nextShops.removeWhere((shop) => shop.id == toShop!.id);
-  }
-
-  // Если нет ни одного варианта и нет коллаборации
-  if (nextShops.isEmpty && !hasCollab) {
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Нет доступных магазинов для продолжения. Сбросьте прогресс.')),
-      );
+    if (hasCollab) {
+      nextShops.removeWhere((shop) => shop.id == toShop!.id);
     }
-    return;
-  }
 
-  await showDialog(
-    context: context,
-    barrierDismissible: false,
-    builder: (context) => AlertDialog(
-      title: const Text('Выбери путь дальше'),
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text('Вы получили скидку в ${currentShop.name}. Куда отправимся дальше?'),
-          const SizedBox(height: 16),
-          // Кнопки выбора
-          Wrap(
-            spacing: 16,
-            runSpacing: 12,
-            alignment: WrapAlignment.center,
-            children: [
-              // Обычные варианты
-              for (final shop in nextShops)
-                _ChoiceButton(
-                  shop: shop,
-                  onTap: _activateShop,
-                  isCollab: false,
-                  onCollabActivated: (trigger, shop) => _checkBonuses(trigger, currentShop: shop),
-                ),
-              // Спецпредложение (если есть)
-              if (hasCollab)
-                _ChoiceButton(
-                  shop: toShop!,
-                  onTap: _activateShop,
-                  isCollab: true,
-                  collabDocId: collabDocId,
-                  onCollabActivated: (trigger, shop) => _checkBonuses(trigger, currentShop: shop),
-                ),
-            ],
+    if (nextShops.isEmpty && !hasCollab) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Нет доступных магазинов для продолжения. Сбросьте прогресс.')),
+        );
+      }
+      return;
+    }
+
+    await showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        title: const Text('Выбери путь дальше'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text('Вы получили скидку в ${currentShop.name}. Куда отправимся дальше?'),
+            const SizedBox(height: 16),
+            Wrap(
+              spacing: 16,
+              runSpacing: 12,
+              alignment: WrapAlignment.center,
+              children: [
+                for (final shop in nextShops)
+                  _ChoiceButton(
+                    shop: shop,
+                    onTap: _activateShop,
+                    isCollab: false,
+                    onCollabActivated: (trigger, shop) => _checkBonuses(trigger, currentShop: shop),
+                  ),
+                if (hasCollab)
+                  _ChoiceButton(
+                    shop: toShop!,
+                    onTap: _activateShop,
+                    isCollab: true,
+                    collabDocId: collabDocId,
+                    onCollabActivated: (trigger, shop) => _checkBonuses(trigger, currentShop: shop),
+                  ),
+              ],
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.pop(context);
+              setState(() {
+                _pendingForkShops = nextShops.isNotEmpty ? nextShops : null;
+                _isPathActive = true;
+                _lastShopId = currentShop.id;
+                _lastShop = currentShop;
+              });
+              _saveProgress();
+            },
+            style: TextButton.styleFrom(foregroundColor: Colors.black87),
+            child: const Text('Закончить путь (продолжить позже)'),
+          ),
+          TextButton(
+            onPressed: () async {
+              Navigator.pop(context);
+              await _resetProgress();
+            },
+            style: TextButton.styleFrom(foregroundColor: Colors.black87),
+            child: const Text('Сбросить путь'),
           ),
         ],
       ),
-      actions: [
-        TextButton(
-          onPressed: () {
-            Navigator.pop(context);
-            setState(() {
-              _pendingForkShops = nextShops.isNotEmpty ? nextShops : null;
-              _isPathActive = true;
-              _lastShopId = currentShop.id;
-              _lastShop = currentShop;
-            });
-            _saveProgress();
-          },
-          style: TextButton.styleFrom(foregroundColor: Colors.black87),
-          child: const Text('Закончить путь (продолжить позже)'),
-        ),
-        TextButton(
-          onPressed: () async {
-            Navigator.pop(context);
-            await _resetProgress();
-          },
-          style: TextButton.styleFrom(foregroundColor: Colors.black87),
-          child: const Text('Сбросить путь'),
-        ),
-      ],
-    ),
-  );
-}
+    );
+  }
 
   Widget _forkButton(Shop shop, {required bool isCollab, String? collabDocId}) {
-  // Краткая скидка, если есть, иначе полная
-  final String discountText = shop.shortDiscount.isNotEmpty ? shop.shortDiscount : shop.discount;
+    final String discountText = shop.shortDiscount.isNotEmpty ? shop.shortDiscount : shop.discount;
 
-  return Expanded(
-    child: Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 8),
-      child: ElevatedButton(
-        onPressed: () async {
-          Navigator.pop(context);
-          if (isCollab && collabDocId != null) {
-            final collabRef = _firestore.collection('active_collabs').doc(collabDocId);
-            try {
-              final collabDoc = await collabRef.get();
-              if (!collabDoc.exists) return;
-              final data = collabDoc.data()!;
-              final currentClicks = (data['clicks'] as int?) ?? 0;
-              await collabRef.update({'clicks': currentClicks + 1});
+    return Expanded(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8),
+        child: ElevatedButton(
+          onPressed: () async {
+            Navigator.pop(context);
+            if (isCollab && collabDocId != null) {
+              final collabRef = _firestore.collection('active_collabs').doc(collabDocId);
+              try {
+                final collabDoc = await collabRef.get();
+                if (!collabDoc.exists) return;
+                final data = collabDoc.data()!;
+                final currentClicks = (data['clicks'] as int?) ?? 0;
+                await collabRef.update({'clicks': currentClicks + 1});
 
-              final offerId = data['offerId'] as String?;
-              final bid = data['bid'] as int?;
-              if (offerId != null && bid != null && bid > 0) {
-                final offerRef = _firestore.collection('auction_offers').doc(offerId);
-                final offerDoc = await offerRef.get();
-                if (!offerDoc.exists) return;
-                final offerData = offerDoc.data()!;
-                final remaining = offerData['remainingBudget'] as int? ?? 0;
-                if (remaining >= bid) {
-                  final newRemaining = remaining - bid;
-                  await offerRef.update({'remainingBudget': newRemaining});
-                  if (newRemaining <= 0) {
-                    await offerRef.update({'status': 'exhausted'});
+                final offerId = data['offerId'] as String?;
+                final bid = data['bid'] as int?;
+                if (offerId != null && bid != null && bid > 0) {
+                  final offerRef = _firestore.collection('auction_offers').doc(offerId);
+                  final offerDoc = await offerRef.get();
+                  if (!offerDoc.exists) return;
+                  final offerData = offerDoc.data()!;
+                  final remaining = offerData['remainingBudget'] as int? ?? 0;
+                  if (remaining >= bid) {
+                    final newRemaining = remaining - bid;
+                    await offerRef.update({'remainingBudget': newRemaining});
+                    if (newRemaining <= 0) {
+                      await offerRef.update({'status': 'exhausted'});
+                      await collabRef.delete();
+                    }
+                  } else {
                     await collabRef.delete();
                   }
-                } else {
-                  await collabRef.delete();
                 }
+              } catch (e) {
+                print('❌ Ошибка в коллаборации: $e');
               }
-            } catch (e) {
-              print('❌ Ошибка в коллаборации: $e');
+              await _checkBonuses('collab_activated', currentShop: shop);
             }
-            await _checkBonuses('collab_activated', currentShop: shop);
-          }
-          await _activateShop(shop);
-        },
-        style: ElevatedButton.styleFrom(
-          backgroundColor: isCollab ? Colors.orange : Colors.white,
-          foregroundColor: isCollab ? Colors.white : const Color(0xFF6C63FF),
-          padding: const EdgeInsets.symmetric(vertical: 12),
-        ),
-        child: Column(
-          children: [
-            Text(shop.icon, style: const TextStyle(fontSize: 32)),
-            const SizedBox(height: 4),
-            Text(shop.name, style: const TextStyle(fontSize: 14)),
-            if (isCollab) const Text('🎁 Спецпредложение!', style: TextStyle(fontSize: 10)),
-            // 👇 Здесь теперь краткая скидка
-            Text(discountText, style: const TextStyle(fontSize: 12)),
-          ],
+            await _activateShop(shop);
+          },
+          style: ElevatedButton.styleFrom(
+            backgroundColor: isCollab ? Colors.orange : Colors.white,
+            foregroundColor: isCollab ? Colors.white : const Color(0xFF6C63FF),
+            padding: const EdgeInsets.symmetric(vertical: 12),
+          ),
+          child: Column(
+            children: [
+              Text(shop.icon, style: const TextStyle(fontSize: 32)),
+              const SizedBox(height: 4),
+              Text(shop.name, style: const TextStyle(fontSize: 14)),
+              if (isCollab) const Text('🎁 Спецпредложение!', style: TextStyle(fontSize: 10)),
+              Text(discountText, style: const TextStyle(fontSize: 12)),
+            ],
+          ),
         ),
       ),
-    ),
-  );
-}
+    );
+  }
 
   Future<void> _activateShop(Shop shop) async {
     if (_usedShopIds.contains(shop.id)) return;
@@ -1703,66 +1683,65 @@ void _showShopInfo(Shop shop) {
     });
 
     if (!mounted) return;
-
     await _checkBonuses('cycle_completed');
   }
 
- Future<void> _showQRDialog(Shop shop) async {
-  final userDoc = await _firestore.collection('user_progress').doc(_userId).get();
-  final subscribedShops = List<String>.from(userDoc.data()?['subscribedShops'] ?? []);
-  final isSubscribed = subscribedShops.contains(shop.id);
+  Future<void> _showQRDialog(Shop shop) async {
+    final userDoc = await _firestore.collection('user_progress').doc(_userId).get();
+    final subscribedShops = List<String>.from(userDoc.data()?['subscribedShops'] ?? []);
+    final isSubscribed = subscribedShops.contains(shop.id);
 
-  // Краткая скидка (если есть) или полная
-  final String discountText = shop.shortDiscount.isNotEmpty ? shop.shortDiscount : shop.discount;
+    final String discountText = shop.shortDiscount.isNotEmpty ? shop.shortDiscount : shop.discount;
 
-  await showDialog(
-    context: context,
-    barrierDismissible: false,
-    builder: (context) => AlertDialog(
-      title: Text(shop.name),
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const Icon(Icons.qr_code_scanner_rounded, size: 120, color: Color(0xFF6C63FF)),
-          const SizedBox(height: 16),
-          Text(discountText, style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
-          const SizedBox(height: 16),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(isSubscribed ? Icons.notifications_active : Icons.notifications_off, color: Colors.grey),
-              const SizedBox(width: 8),
-              TextButton(
-                onPressed: () async {
-                  List<String> newSubscribed;
-                  if (isSubscribed) {
-                    newSubscribed = subscribedShops.where((id) => id != shop.id).toList();
-                  } else {
-                    newSubscribed = [...subscribedShops, shop.id];
-                  }
-                  await _firestore.collection('user_progress').doc(_userId).update({
-                    'subscribedShops': newSubscribed,
-                  });
-                  if (mounted) Navigator.pop(context);
-                  _showQRDialog(shop);
-                },
-                style: TextButton.styleFrom(foregroundColor: Colors.black87),
-                child: Text(isSubscribed ? 'Отписаться от уведомлений' : 'Подписаться на акции'),
-              ),
-            ],
+    await showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        title: Text(shop.name),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.qr_code_scanner_rounded, size: 120, color: Color(0xFF6C63FF)),
+            const SizedBox(height: 16),
+            Text(discountText, style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 16),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(isSubscribed ? Icons.notifications_active : Icons.notifications_off, color: Colors.grey),
+                const SizedBox(width: 8),
+                TextButton(
+                  onPressed: () async {
+                    List<String> newSubscribed;
+                    if (isSubscribed) {
+                      newSubscribed = subscribedShops.where((id) => id != shop.id).toList();
+                    } else {
+                      newSubscribed = [...subscribedShops, shop.id];
+                    }
+                    await _firestore.collection('user_progress').doc(_userId).update({
+                      'subscribedShops': newSubscribed,
+                    });
+                    if (mounted) Navigator.pop(context);
+                    _showQRDialog(shop);
+                  },
+                  style: TextButton.styleFrom(foregroundColor: Colors.black87),
+                  child: Text(isSubscribed ? 'Отписаться от уведомлений' : 'Подписаться на акции'),
+                ),
+              ],
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            style: TextButton.styleFrom(foregroundColor: Colors.black87),
+            child: const Text('Закрыть'),
           ),
         ],
       ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context),
-          style: TextButton.styleFrom(foregroundColor: Colors.black87),
-          child: const Text('Закрыть'),
-        ),
-      ],
-    ),
-  );
-}
+    );
+  }
+
   Future<void> _showFirstChoice() async {
     if (_allShops.isEmpty) return;
     var available = _allShops.where((s) => !_usedShopIds.contains(s.id)).toList();
@@ -1812,12 +1791,10 @@ void _showShopInfo(Shop shop) {
       _showFirstChoice();
       return;
     }
-
     if (_lastShop != null) {
       await _showForkDialog(_lastShop!);
       return;
     }
-
     if (_lastShopId != null) {
       final doc = await _firestore.collection('shops').doc(_lastShopId).get();
       if (doc.exists) {
@@ -1827,7 +1804,6 @@ void _showShopInfo(Shop shop) {
         return;
       }
     }
-
     if (_usedShopIds.isNotEmpty) {
       final lastUsedId = _usedShopIds.last;
       final doc = await _firestore.collection('shops').doc(lastUsedId).get();
@@ -1842,7 +1818,6 @@ void _showShopInfo(Shop shop) {
         return;
       }
     }
-
     if (mounted) {
       showDialog(
         context: context,
@@ -1850,10 +1825,7 @@ void _showShopInfo(Shop shop) {
           title: const Text('Нет данных'),
           content: const Text('Не удалось найти последний магазин. Сбросить прогресс?'),
           actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: const Text('Отмена'),
-            ),
+            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Отмена')),
             ElevatedButton(
               onPressed: () {
                 Navigator.pop(ctx);
@@ -1891,12 +1863,14 @@ void _showShopInfo(Shop shop) {
                   shop: _pendingForkShops![0],
                   onTap: _activateShop,
                   onInfoTap: () => _showShopInfo(_pendingForkShops![0]),
+                  onHover: (id) => setState(() => _hoveredShopId = id),
                 ),
                 const SizedBox(width: 20),
                 _PendingShopButton(
                   shop: _pendingForkShops![1],
                   onTap: _activateShop,
                   onInfoTap: () => _showShopInfo(_pendingForkShops![1]),
+                  onHover: (id) => setState(() => _hoveredShopId = id),
                 ),
               ],
             ),
@@ -1972,6 +1946,7 @@ void _showShopInfo(Shop shop) {
               shop: shop,
               onTap: _activateShop,
               onInfoTap: () => _showShopInfo(shop),
+              onHover: (id) => setState(() => _hoveredShopId = id),
             )).toList(),
           ),
           const SizedBox(height: 24),
@@ -2064,6 +2039,8 @@ void _showShopInfo(Shop shop) {
             mallId: _selectedMallId,
           ),
           const SizedBox(height: 16),
+          _buildInlineMap(),   // ← мини-карта с подсветкой
+          const SizedBox(height: 16),
           Expanded(child: _buildMainContent()),
         ],
       ),
@@ -2107,109 +2084,7 @@ void _showShopInfo(Shop shop) {
       ],
     );
   }
-Widget _ShopChoiceButton({
-  required Shop shop,
-  required Function(Shop) onTap,
-  bool isCollab = false,
-  String? collabDocId,
-}) {
-  final String discountText = shop.shortDiscount.isNotEmpty ? shop.shortDiscount : shop.discount;
-
-  return GestureDetector(
-    onTap: () async {
-      // Логика коллаборации (если нужно)
-      if (isCollab && collabDocId != null) {
-        final collabRef = _firestore.collection('active_collabs').doc(collabDocId);
-        try {
-          final collabDoc = await collabRef.get();
-          if (collabDoc.exists) {
-            final data = collabDoc.data()!;
-            final currentClicks = (data['clicks'] as int?) ?? 0;
-            await collabRef.update({'clicks': currentClicks + 1});
-
-            final offerId = data['offerId'] as String?;
-            final bid = data['bid'] as int?;
-            if (offerId != null && bid != null && bid > 0) {
-              final offerRef = _firestore.collection('auction_offers').doc(offerId);
-              final offerDoc = await offerRef.get();
-              if (offerDoc.exists) {
-                final offerData = offerDoc.data()!;
-                final remaining = offerData['remainingBudget'] as int? ?? 0;
-                if (remaining >= bid) {
-                  final newRemaining = remaining - bid;
-                  await offerRef.update({'remainingBudget': newRemaining});
-                  if (newRemaining <= 0) {
-                    await offerRef.update({'status': 'exhausted'});
-                    await collabRef.delete();
-                  }
-                } else {
-                  await collabRef.delete();
-                }
-              }
-            }
-          }
-        } catch (e) {
-          print('❌ Ошибка в коллаборации: $e');
-        }
-        await _checkBonuses('collab_activated', currentShop: shop);
-      }
-      onTap(shop);
-    },
-    child: Container(
-      width: 130,
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: isCollab ? Colors.orange.shade50 : Colors.white,
-        borderRadius: BorderRadius.circular(24),
-        border: Border.all(
-          color: isCollab ? Colors.orange : const Color(0xFF6C63FF).withOpacity(0.3),
-          width: 1.5,
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.08),
-            blurRadius: 8,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          if (shop.imageUrl.isNotEmpty)
-            ClipRRect(
-              borderRadius: BorderRadius.circular(12),
-              child: Image.network(shop.imageUrl, height: 70, width: 70, fit: BoxFit.cover),
-            )
-          else
-            Text(shop.icon, style: const TextStyle(fontSize: 40)),
-          const SizedBox(height: 8),
-          Text(
-            shop.name,
-            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
-            textAlign: TextAlign.center,
-          ),
-          if (isCollab)
-            const Padding(
-              padding: EdgeInsets.only(top: 4),
-              child: Text('🎁 Спецпредложение!', style: TextStyle(fontSize: 10, color: Colors.deepOrange)),
-            ),
-          if (discountText.isNotEmpty)
-            Padding(
-              padding: const EdgeInsets.only(top: 4),
-              child: Text(
-                discountText,
-                style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: Colors.green),
-                textAlign: TextAlign.center,
-              ),
-            ),
-        ],
-      ),
-    ),
-  );
 }
-}
-
 
 // ----- ЭКРАН ПРОФИЛЯ (адаптирован под универсальные бонусы) -----
 class ProfileScreen extends StatefulWidget {
@@ -2504,31 +2379,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
           ),
           const SizedBox(height: 20),
         ],
-      ),
-    );
-  }
-}
-
-// ----- ЗАГЛУШКА ЭКРАНА КАРТЫ -----
-class MapPlaceholder extends StatelessWidget {
-  const MapPlaceholder({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    return GradientScaffold(
-      appBar: AppBar(title: const Text('Карта скидок')),
-      body: Center(
-        child: Container(
-          padding: const EdgeInsets.all(24),
-          decoration: BoxDecoration(
-            color: Colors.white.withOpacity(0.9),
-            borderRadius: BorderRadius.circular(40),
-          ),
-          child: const Text(
-            'Здесь будет карта ТЦ с акциями',
-            style: TextStyle(fontSize: 18),
-          ),
-        ),
       ),
     );
   }
