@@ -15,6 +15,8 @@ class Shop {
   final String infoImageUrl;
   final double? mapX;
   final double? mapY;
+  final double? mapWidth;   // 🆕
+  final double? mapHeight;  // 🆕
 
   Shop({
     required this.id,
@@ -31,6 +33,8 @@ class Shop {
     this.infoImageUrl = '',
     this.mapX,
     this.mapY,
+    this.mapWidth,
+    this.mapHeight,
   });
 
   factory Shop.fromFirestore(DocumentSnapshot doc) {
@@ -61,6 +65,8 @@ class Shop {
       infoImageUrl: data['infoImageUrl'] ?? '',
       mapX: parseCoord(data['mapX']),
       mapY: parseCoord(data['mapY']),
+      mapWidth: parseCoord(data['mapWidth']),
+      mapHeight: parseCoord(data['mapHeight']),
     );
   }
 }

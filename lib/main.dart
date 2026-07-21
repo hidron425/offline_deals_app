@@ -8,6 +8,7 @@ import 'firebase_options.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'mall_map_screen.dart';
 import 'models.dart';
+import 'dart:math' as math;
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -1269,63 +1270,79 @@ class _DealsGameScreenState extends State<DealsGameScreen> {
   }
 
   // ----- МИНИ-КАРТА НА ГЛАВНОМ ЭКРАНЕ (С ПОДСВЕТКОЙ) -----
-  Widget _buildInlineMap() {
-    return SizedBox(
-      height: 200,
-      child: InteractiveViewer(
-        minScale: 0.5,
-        maxScale: 2.0,
-        child: LayoutBuilder(
-          builder: (context, constraints) {
-            return Stack(
-              children: [
-                Image.asset(
-                  'assets/images/mall_map.png',
-                  width: constraints.maxWidth,
-                  height: constraints.maxHeight,
-                  fit: BoxFit.contain,
-                ),
-                ..._allShops.where((s) => s.mapX != null && s.mapY != null).map((shop) {
-                  final double x = shop.mapX! * constraints.maxWidth;
-                  final double y = shop.mapY! * constraints.maxHeight;
-                  final bool isHovered = _hoveredShopId == shop.id;
-                  return Positioned(
-                    left: x - (isHovered ? 20 : 15),
-                    top: y - (isHovered ? 20 : 15),
-                    child: GestureDetector(
-                      onTap: () => _showShopInfo(shop),
-                      child: AnimatedContainer(
-                        duration: const Duration(milliseconds: 200),
-                        width: isHovered ? 40 : 30,
-                        height: isHovered ? 40 : 30,
-                        decoration: BoxDecoration(
-                          color: isHovered
-                              ? Colors.yellow.withOpacity(0.9)
-                              : const Color(0xFF6C63FF).withOpacity(0.8),
-                          shape: BoxShape.circle,
-                          border: Border.all(
-                            color: isHovered ? Colors.orange : Colors.white,
-                            width: isHovered ? 3 : 2,
-                          ),
-                        ),
-                        child: Center(
-                          child: Text(
-                            shop.icon,
-                            style: TextStyle(fontSize: isHovered ? 18 : 14),
-                          ),
-                        ),
+ Widget _buildInlineMap() {
+  return SizedBox(
+    height: 200,
+    child: LayoutBuilder(
+      builder: (context, constraints) {
+        const double imageWidth = 2045;
+        const double imageHeight = 731;
+        final double scaleX = constraints.maxWidth / imageWidth;
+        final double scaleY = constraints.maxHeight / imageHeight;
+        final double scale = math.min(scaleX, scaleY);
+        final double displayWidth = imageWidth * scale;
+        final double displayHeight = imageHeight * scale;
+        final double offsetX = (constraints.maxWidth - displayWidth) / 2;
+        final double offsetY = (constraints.maxHeight - displayHeight) / 2;
+
+        return InteractiveViewer(
+          minScale: 0.5,
+          maxScale: 2.0,
+          child: Stack(
+            children: [
+              // Фоновое изображение
+              Image.asset(
+                'assets/images/mall_map.png',
+                width: constraints.maxWidth,
+                height: constraints.maxHeight,
+                fit: BoxFit.contain,
+              ),
+              // Подсветка только при наведении (и если размеры заданы)
+              ..._allShops.where((s) => s.mapX != null && s.mapY != null).map((shop) {
+                final bool isHovered = _hoveredShopId == shop.id;
+                // Если не наведён – ничего не рисуем
+                if (!isHovered) return const SizedBox.shrink();
+
+                // Проверяем, заданы ли размеры
+                if (shop.mapWidth == null || shop.mapHeight == null ||
+                    shop.mapWidth! <= 0 || shop.mapHeight! <= 0) {
+                  // Размеры не заданы – не подсвечиваем (или можно нарисовать круг-заглушку, но вы просили убрать иконки)
+                  return const SizedBox.shrink();
+                }
+
+                double w = shop.mapWidth! * imageWidth;
+                double h = shop.mapHeight! * imageHeight;
+                final double xOnImage = shop.mapX! * imageWidth;
+                final double yOnImage = shop.mapY! * imageHeight;
+                final double left = (xOnImage - w / 2) * scale + offsetX;
+                final double top = (yOnImage - h / 2) * scale + offsetY;
+                final double rectWidth = w * scale;
+                final double rectHeight = h * scale;
+
+                return Positioned(
+                  left: left,
+                  top: top,
+                  width: rectWidth,
+                  height: rectHeight,
+                  child: IgnorePointer(
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 200),
+                      decoration: BoxDecoration(
+                        color: Colors.orange.withOpacity(0.3),
+                        border: Border.all(color: Colors.orange, width: 2),
+                        borderRadius: BorderRadius.circular(2),
                       ),
                     ),
-                  );
-                }).toList(),
-              ],
-            );
-          },
-        ),
-      ),
-    );
-  }
-
+                  ),
+                );
+              }).toList(),
+            ],
+          ),
+        );
+      },
+    ),
+  );
+}
   // ----- ОСТАЛЬНЫЕ МЕТОДЫ КВЕСТА (без изменений) -----
   Future<void> _showLocationPicker({bool isChanging = false}) async {
     final Map<String, List<Map<String, String>>> citiesAndMalls = {
