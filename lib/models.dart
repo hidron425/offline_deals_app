@@ -15,8 +15,10 @@ class Shop {
   final String infoImageUrl;
   final double? mapX;
   final double? mapY;
-  final double? mapWidth;   // 🆕
-  final double? mapHeight;  // 🆕
+  final double? mapWidth;
+  final double? mapHeight;
+  final List<double>? imageTransform;      // 16 чисел для логотипа
+  final List<double>? infoImageTransform;  // 16 чисел для инфо-фото
 
   Shop({
     required this.id,
@@ -35,6 +37,8 @@ class Shop {
     this.mapY,
     this.mapWidth,
     this.mapHeight,
+    this.imageTransform,
+    this.infoImageTransform,
   });
 
   factory Shop.fromFirestore(DocumentSnapshot doc) {
@@ -46,6 +50,13 @@ class Shop {
       if (value is String) {
         final parsed = double.tryParse(value);
         return parsed;
+      }
+      return null;
+    }
+
+    List<double>? parseTransform(dynamic value) {
+      if (value is List) {
+        return value.map((e) => (e as num).toDouble()).toList();
       }
       return null;
     }
@@ -67,6 +78,8 @@ class Shop {
       mapY: parseCoord(data['mapY']),
       mapWidth: parseCoord(data['mapWidth']),
       mapHeight: parseCoord(data['mapHeight']),
+      imageTransform: parseTransform(data['imageTransform']),
+      infoImageTransform: parseTransform(data['infoImageTransform']),
     );
   }
 }

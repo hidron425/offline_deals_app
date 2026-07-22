@@ -40,16 +40,8 @@ class GradientScaffold extends StatelessWidget {
     return Scaffold(
       resizeToAvoidBottomInset: resizeToAvoidBottomInset,
       appBar: appBar,
-      body: Container(
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [Color(0xFF6C63FF), Color(0xFF00C9A7)],
-          ),
-        ),
-        child: body,
-      ),
+      backgroundColor: Colors.white,   // <-- белый фон
+      body: body,
       floatingActionButton: floatingActionButton,
       bottomNavigationBar: bottomNavigationBar,
     );
@@ -65,28 +57,30 @@ class OfflineDealsApp extends StatelessWidget {
       title: 'Offline Deals',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
-        useMaterial3: true,
-        brightness: Brightness.light,
-        scaffoldBackgroundColor: Colors.transparent,
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xFF6C63FF),
-          primary: const Color(0xFF6C63FF),
-          secondary: const Color(0xFFFF6584),
-          tertiary: const Color(0xFF00C9A7),
-          background: Colors.transparent,
-        ),
-        appBarTheme: const AppBarTheme(
-          backgroundColor: Colors.transparent,
-          elevation: 0,
-          centerTitle: true,
-          foregroundColor: Colors.white,
-          titleTextStyle: TextStyle(
-            color: Colors.white,
-            fontSize: 20,
-            fontWeight: FontWeight.bold,
-          ),
-          iconTheme: IconThemeData(color: Colors.white),
-        ),
+  useMaterial3: true,
+  brightness: Brightness.light,
+  scaffoldBackgroundColor: Colors.white,   // белый фон для всего приложения
+  colorScheme: ColorScheme.fromSeed(
+    seedColor: const Color(0xFF6C63FF),
+    primary: const Color(0xFF6C63FF),
+    secondary: const Color(0xFFFF6584),
+    tertiary: const Color(0xFF00C9A7),
+    surface: Colors.white,                // поверхность карточек и т.д.
+    onPrimary: Colors.white,              // текст на primary-цвете (кнопки)
+    onSurface: Colors.black87,            // основной текст
+  ),
+  appBarTheme: const AppBarTheme(
+    backgroundColor: Colors.white,
+    elevation: 0,
+    centerTitle: true,
+    foregroundColor: Colors.black87,       // тёмные иконки и текст
+    titleTextStyle: TextStyle(
+      color: Colors.black87,
+      fontSize: 20,
+      fontWeight: FontWeight.bold,
+    ),
+    iconTheme: IconThemeData(color: Colors.black87),
+  ),
         cardTheme: CardThemeData(
           color: Colors.white.withOpacity(0.9),
           elevation: 8,
@@ -515,7 +509,7 @@ class _ShopCard extends StatefulWidget {
   final Shop shop;
   final Function(Shop) onTap;
   final VoidCallback? onInfoTap;
-  final ValueChanged<String?> onHover;   // для подсветки на карте
+  final ValueChanged<String?> onHover;
 
   const _ShopCard({
     required this.shop,
@@ -538,11 +532,16 @@ class _ShopCardState extends State<_ShopCard> {
         ? widget.shop.shortDiscount
         : widget.shop.discount;
 
+    // Матрица трансформации (если есть в Firestore, иначе единичная)
+    final Matrix4 transformMatrix = widget.shop.imageTransform != null
+        ? Matrix4.fromList(widget.shop.imageTransform!)
+        : Matrix4.identity();
+
     return MouseRegion(
       cursor: SystemMouseCursors.click,
       onEnter: (_) {
         setState(() => _isHovered = true);
-        widget.onHover(widget.shop.id);   // сообщаем ID для карты
+        widget.onHover(widget.shop.id);
       },
       onExit: (_) {
         setState(() => _isHovered = false);
@@ -572,15 +571,20 @@ class _ShopCardState extends State<_ShopCard> {
                   Stack(
                     children: [
                       if (widget.shop.imageUrl.isNotEmpty)
-                        Image.network(
-                          widget.shop.imageUrl,
-                          width: double.infinity,
-                          height: 100,
-                          fit: BoxFit.cover,
-                          errorBuilder: (context, error, stackTrace) => Container(
-                            height: 100,
-                            color: Colors.grey[100],
-                            child: Center(child: Text(widget.shop.icon, style: const TextStyle(fontSize: 48))),
+                        ClipRect(
+                          child: Transform(
+                            transform: transformMatrix,
+                            child: Image.network(
+                              widget.shop.imageUrl,
+                              width: double.infinity,
+                              height: 100,
+                              fit: BoxFit.cover,
+                              errorBuilder: (context, error, stackTrace) => Container(
+                                height: 100,
+                                color: Colors.grey[100],
+                                child: Center(child: Text(widget.shop.icon, style: const TextStyle(fontSize: 48))),
+                              ),
+                            ),
                           ),
                         )
                       else
@@ -653,12 +657,13 @@ class _ShopCardState extends State<_ShopCard> {
   }
 }
 
+
 // ----- КНОПКА ОТЛОЖЕННОГО МАГАЗИНА (с иконкой информации и наведением на карту) -----
 class _PendingShopButton extends StatefulWidget {
   final Shop shop;
   final Function(Shop) onTap;
   final VoidCallback? onInfoTap;
-  final ValueChanged<String?> onHover;   // для подсветки на карте
+  final ValueChanged<String?> onHover;
 
   const _PendingShopButton({
     required this.shop,
@@ -680,6 +685,10 @@ class _PendingShopButtonState extends State<_PendingShopButton> {
     final String cardDiscount = widget.shop.shortDiscount.isNotEmpty
         ? widget.shop.shortDiscount
         : widget.shop.discount;
+
+    final Matrix4 transformMatrix = widget.shop.imageTransform != null
+        ? Matrix4.fromList(widget.shop.imageTransform!)
+        : Matrix4.identity();
 
     return MouseRegion(
       cursor: SystemMouseCursors.click,
@@ -711,17 +720,21 @@ class _PendingShopButtonState extends State<_PendingShopButton> {
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  // Изображение на всю ширину, высота 100
                   if (widget.shop.imageUrl.isNotEmpty)
-                    Image.network(
-                      widget.shop.imageUrl,
-                      width: double.infinity,
-                      height: 100,
-                      fit: BoxFit.cover,
-                      errorBuilder: (context, error, stackTrace) => Container(
-                        height: 100,
-                        color: Colors.grey[100],
-                        child: Center(child: Text(widget.shop.icon, style: const TextStyle(fontSize: 48))),
+                    ClipRect(
+                      child: Transform(
+                        transform: transformMatrix,
+                        child: Image.network(
+                          widget.shop.imageUrl,
+                          width: double.infinity,
+                          height: 100,
+                          fit: BoxFit.cover,
+                          errorBuilder: (context, error, stackTrace) => Container(
+                            height: 100,
+                            color: Colors.grey[100],
+                            child: Center(child: Text(widget.shop.icon, style: const TextStyle(fontSize: 48))),
+                          ),
+                        ),
                       ),
                     )
                   else
@@ -730,26 +743,15 @@ class _PendingShopButtonState extends State<_PendingShopButton> {
                       color: Colors.grey[100],
                       child: Center(child: Text(widget.shop.icon, style: const TextStyle(fontSize: 48))),
                     ),
-                  // Текстовая часть
                   Container(
                     padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 6),
-                    decoration: BoxDecoration(
-                      color: Colors.white.withOpacity(0.85),
-                    ),
+                    decoration: BoxDecoration(color: Colors.white.withOpacity(0.85)),
                     child: Column(
                       children: [
-                        Text(
-                          widget.shop.name,
-                          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
-                          textAlign: TextAlign.center,
-                        ),
+                        Text(widget.shop.name, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13), textAlign: TextAlign.center),
                         const SizedBox(height: 4),
                         if (cardDiscount.isNotEmpty)
-                          Text(
-                            cardDiscount,
-                            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Colors.green),
-                            textAlign: TextAlign.center,
-                          ),
+                          Text(cardDiscount, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Colors.green), textAlign: TextAlign.center),
                       ],
                     ),
                   ),
@@ -762,7 +764,6 @@ class _PendingShopButtonState extends State<_PendingShopButton> {
     );
   }
 }
-
 // ----- КНОПКА ВЫБОРА В ДИАЛОГЕ (С АНИМАЦИЕЙ) -----
 class _ChoiceButton extends StatefulWidget {
   final Shop shop;
@@ -1968,13 +1969,15 @@ class _DealsGameScreenState extends State<DealsGameScreen> {
           ),
           const SizedBox(height: 24),
           ElevatedButton(
-            onPressed: _showFirstChoice,
-            style: ElevatedButton.styleFrom(
-              padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 14),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(40)),
-            ),
-            child: const Text('Начать путь', style: TextStyle(fontSize: 18)),
-          ),
+  onPressed: _showFirstChoice,
+  style: ElevatedButton.styleFrom(
+    backgroundColor: const Color(0xFF6C63FF),
+    foregroundColor: Colors.white,
+    padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 14),
+    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(40)),
+  ),
+  child: const Text('Начать путь', style: TextStyle(fontSize: 18)),
+),
           const SizedBox(height: 32),
         ],
       ),
@@ -2026,7 +2029,7 @@ class _DealsGameScreenState extends State<DealsGameScreen> {
                 Container(
                   padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
                   decoration: BoxDecoration(
-                    color: Colors.black.withOpacity(0.35),
+                    color: Colors.black.withOpacity(0.9),
                     borderRadius: BorderRadius.circular(100),
                     boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.1), blurRadius: 8)],
                   ),
