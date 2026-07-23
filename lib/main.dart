@@ -420,6 +420,33 @@ class _BannerItem extends StatelessWidget {
         child: const Center(child: CircularProgressIndicator()),
       );
     }
+
+    // Фон: если есть картинка – показываем её, иначе цветной градиент
+    Widget background;
+    if (banner.imageUrl.isNotEmpty) {
+      background = Image.network(
+        banner.imageUrl,
+        width: double.infinity,
+        height: double.infinity,
+        fit: BoxFit.cover,
+        errorBuilder: (context, error, stackTrace) => Container(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              colors: [Color(banner.color), Color(banner.color).withOpacity(0.8)],
+            ),
+          ),
+        ),
+      );
+    } else {
+      background = Container(
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            colors: [Color(banner.color), Color(banner.color).withOpacity(0.8)],
+          ),
+        ),
+      );
+    }
+
     return MouseRegion(
       cursor: SystemMouseCursors.click,
       child: GestureDetector(
@@ -427,9 +454,6 @@ class _BannerItem extends StatelessWidget {
         child: Container(
           margin: const EdgeInsets.symmetric(horizontal: 16),
           decoration: BoxDecoration(
-            gradient: LinearGradient(
-              colors: [Color(banner.color), Color(banner.color).withOpacity(0.8)],
-            ),
             borderRadius: BorderRadius.circular(28),
             boxShadow: [
               BoxShadow(
@@ -441,31 +465,35 @@ class _BannerItem extends StatelessWidget {
           ),
           child: ClipRRect(
             borderRadius: BorderRadius.circular(28),
-            child: BackdropFilter(
-              filter: ImageFilter.blur(sigmaX: 5, sigmaY: 5),
-              child: Container(
-                color: Colors.white.withOpacity(0.2),
-                padding: const EdgeInsets.all(20),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      banner.title,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 22,
-                        fontWeight: FontWeight.bold,
-                        shadows: [Shadow(offset: Offset(0, 1), blurRadius: 4, color: Colors.black26)],
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                background,
+                // Затемняющая подложка для читаемости текста
+                Container(color: Colors.black.withOpacity(0.3)),
+                Padding(
+                  padding: const EdgeInsets.all(20),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        banner.title,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 22,
+                          fontWeight: FontWeight.bold,
+                          shadows: [Shadow(offset: Offset(0, 1), blurRadius: 4, color: Colors.black26)],
+                        ),
                       ),
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      banner.description,
-                      style: const TextStyle(color: Colors.white70, fontSize: 14),
-                    ),
-                  ],
+                      const SizedBox(height: 8),
+                      Text(
+                        banner.description,
+                        style: const TextStyle(color: Colors.white70, fontSize: 14),
+                      ),
+                    ],
+                  ),
                 ),
-              ),
+              ],
             ),
           ),
         ),
@@ -532,7 +560,6 @@ class _ShopCardState extends State<_ShopCard> {
         ? widget.shop.shortDiscount
         : widget.shop.discount;
 
-    // Матрица трансформации (если есть в Firestore, иначе единичная)
     final Matrix4 transformMatrix = widget.shop.imageTransform != null
         ? Matrix4.fromList(widget.shop.imageTransform!)
         : Matrix4.identity();
@@ -555,11 +582,23 @@ class _ShopCardState extends State<_ShopCard> {
           child: Container(
             width: 130,
             decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.95),
+              color: Colors.white,
               borderRadius: BorderRadius.circular(24),
               boxShadow: _isHovered
-                  ? [BoxShadow(color: Colors.black.withOpacity(0.2), blurRadius: 12, offset: const Offset(0, 8))]
-                  : [BoxShadow(color: Colors.black.withOpacity(0.1), blurRadius: 6, offset: const Offset(0, 2))],
+                  ? [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.25),
+                        blurRadius: 16,
+                        offset: const Offset(0, 10),
+                      )
+                    ]
+                  : [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.15),
+                        blurRadius: 10,
+                        offset: const Offset(0, 4),
+                      )
+                    ],
             ),
             child: ClipRRect(
               borderRadius: BorderRadius.circular(24),
@@ -581,7 +620,7 @@ class _ShopCardState extends State<_ShopCard> {
                               fit: BoxFit.cover,
                               errorBuilder: (context, error, stackTrace) => Container(
                                 height: 100,
-                                color: Colors.grey[100],
+                                color: Colors.grey[300],
                                 child: Center(child: Text(widget.shop.icon, style: const TextStyle(fontSize: 48))),
                               ),
                             ),
@@ -590,7 +629,7 @@ class _ShopCardState extends State<_ShopCard> {
                       else
                         Container(
                           height: 100,
-                          color: Colors.grey[100],
+                          color: Colors.grey[300],
                           child: Center(child: Text(widget.shop.icon, style: const TextStyle(fontSize: 48))),
                         ),
                       // Иконка информации
@@ -621,18 +660,26 @@ class _ShopCardState extends State<_ShopCard> {
                         ),
                     ],
                   ),
-                  // Нижняя плашка с названием и скидкой
+                  // Нижняя плашка (полупрозрачная)
                   Container(
                     padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 6),
                     decoration: BoxDecoration(
-                      color: Colors.white.withOpacity(0.85),
+                      color: Colors.black.withOpacity(0.02),
+                      borderRadius: const BorderRadius.only(
+                        bottomLeft: Radius.circular(24),
+                        bottomRight: Radius.circular(24),
+                      ),
                     ),
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         Text(
                           widget.shop.name,
-                          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
+                          style: const TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 12,
+                            color: Colors.black87,
+                          ),
                           textAlign: TextAlign.center,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
@@ -641,7 +688,11 @@ class _ShopCardState extends State<_ShopCard> {
                         if (cardDiscount.isNotEmpty)
                           Text(
                             cardDiscount,
-                            style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: Colors.green),
+                            style: const TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600,
+                              color: Color(0xFF2E7D32),
+                            ),
                             textAlign: TextAlign.center,
                           ),
                       ],
@@ -656,7 +707,6 @@ class _ShopCardState extends State<_ShopCard> {
     );
   }
 }
-
 
 // ----- КНОПКА ОТЛОЖЕННОГО МАГАЗИНА (с иконкой информации и наведением на карту) -----
 class _PendingShopButton extends StatefulWidget {
@@ -708,11 +758,23 @@ class _PendingShopButtonState extends State<_PendingShopButton> {
           child: Container(
             width: 140,
             decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.95),
+              color: Colors.white,
               borderRadius: BorderRadius.circular(28),
               boxShadow: _isHovered
-                  ? [BoxShadow(color: Colors.black.withOpacity(0.2), blurRadius: 12, offset: const Offset(0, 8))]
-                  : [BoxShadow(color: Colors.black.withOpacity(0.1), blurRadius: 6, offset: const Offset(0, 2))],
+                  ? [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.25),
+                        blurRadius: 16,
+                        offset: const Offset(0, 10),
+                      )
+                    ]
+                  : [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.15),
+                        blurRadius: 10,
+                        offset: const Offset(0, 4),
+                      )
+                    ],
             ),
             child: ClipRRect(
               borderRadius: BorderRadius.circular(28),
@@ -731,7 +793,7 @@ class _PendingShopButtonState extends State<_PendingShopButton> {
                           fit: BoxFit.cover,
                           errorBuilder: (context, error, stackTrace) => Container(
                             height: 100,
-                            color: Colors.grey[100],
+                            color: Colors.grey[300],
                             child: Center(child: Text(widget.shop.icon, style: const TextStyle(fontSize: 48))),
                           ),
                         ),
@@ -740,18 +802,40 @@ class _PendingShopButtonState extends State<_PendingShopButton> {
                   else
                     Container(
                       height: 100,
-                      color: Colors.grey[100],
+                      color: Colors.grey[300],
                       child: Center(child: Text(widget.shop.icon, style: const TextStyle(fontSize: 48))),
                     ),
                   Container(
                     padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 6),
-                    decoration: BoxDecoration(color: Colors.white.withOpacity(0.85)),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withOpacity(0.02),
+                      borderRadius: const BorderRadius.only(
+                        bottomLeft: Radius.circular(28),
+                        bottomRight: Radius.circular(28),
+                      ),
+                    ),
                     child: Column(
                       children: [
-                        Text(widget.shop.name, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13), textAlign: TextAlign.center),
+                        Text(
+                          widget.shop.name,
+                          style: const TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 13,
+                            color: Colors.white,
+                          ),
+                          textAlign: TextAlign.center,
+                        ),
                         const SizedBox(height: 4),
                         if (cardDiscount.isNotEmpty)
-                          Text(cardDiscount, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Colors.green), textAlign: TextAlign.center),
+                          Text(
+                            cardDiscount,
+                            style: const TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                              color: Color(0xFF2e7d32),
+                            ),
+                            textAlign: TextAlign.center,
+                          ),
                       ],
                     ),
                   ),

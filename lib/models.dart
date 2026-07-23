@@ -91,6 +91,8 @@ class BannerAd {
   final String targetShopId;
   final String discount;
   final String mallId;
+  final String imageUrl;                // 🆕
+  final List<double>? imageTransform;   // 🆕
 
   BannerAd({
     required this.title,
@@ -99,6 +101,8 @@ class BannerAd {
     required this.targetShopId,
     required this.discount,
     required this.mallId,
+    this.imageUrl = '',                 // 🆕
+    this.imageTransform,                // 🆕
   });
 
   factory BannerAd.fromFirestore(DocumentSnapshot doc) {
@@ -110,6 +114,14 @@ class BannerAd {
       colorInt = int.parse(hexCode, radix: 16);
       if (hexCode.length == 6) colorInt = 0xFF000000 | colorInt;
     }
+
+    List<double>? parseTransform(dynamic value) {
+      if (value is List) {
+        return value.map((e) => (e as num).toDouble()).toList();
+      }
+      return null;
+    }
+
     return BannerAd(
       title: data['title'] ?? '',
       description: data['description'] ?? '',
@@ -117,6 +129,8 @@ class BannerAd {
       targetShopId: data['targetShopId'] ?? '',
       discount: data['discount'] ?? '',
       mallId: data['mallId'] ?? '',
+      imageUrl: data['imageUrl'] ?? '',                       // 🆕
+      imageTransform: parseTransform(data['imageTransform']), // 🆕
     );
   }
 }
