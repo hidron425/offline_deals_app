@@ -2487,3 +2487,92 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 }
+class BannerImagePreview extends StatefulWidget {
+  final String imageUrl;
+  final Rect? cropRect;
+  final double width;
+  final double height;
+
+  const BannerImagePreview({
+    Key? key,
+    required this.imageUrl,
+    required this.cropRect,
+    required this.width,
+    required this.height,
+  }) : super(key: key);
+
+  @override
+  State<BannerImagePreview> createState() => _BannerImagePreviewState();
+}
+
+class _BannerImagePreviewState extends State<BannerImagePreview> {
+  Size? _imageSize;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadSize();
+  }
+
+  @override
+  void didUpdateWidget(covariant BannerImagePreview oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.imageUrl != widget.imageUrl) {
+      _imageSize = null;
+      _loadSize();
+    }
+  }
+
+  void _loadSize() {
+    if (widget.imageUrl.isEmpty) return;
+    Image.network(widget.imageUrl)
+        .image
+        .resolve(const ImageConfiguration())
+        .addListener(ImageStreamListener((info, _) {
+      if (mounted) {
+        setState(() {
+          _imageSize = Size(
+            info.image.width.toDouble(),
+            info.image.height.toDouble(),
+          );
+        });
+      }
+    }));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (widget.cropRect == null ||
+        widget.cropRect!.isEmpty ||
+        widget.cropRect!.width == 0 ||
+        _imageSize == null) {
+      return Image.network(
+        widget.imageUrl,
+        fit: BoxFit.cover,
+        width: widget.width,
+        height: widget.height,
+      );
+    }
+
+    final crop = widget.cropRect!;
+    final previewScale = widget.width / crop.width;
+
+    return ClipRect(
+      child: OverflowBox(
+        alignment: Alignment.topLeft,
+        minWidth: 0,
+        minHeight: 0,
+        maxWidth: double.infinity,
+        maxHeight: double.infinity,
+        child: Transform.translate(
+          offset: Offset(-crop.left * previewScale, -crop.top * previewScale),
+          child: SizedBox(
+            width: _imageSize!.width * previewScale,
+            height: _imageSize!.height * previewScale,
+            child: Image.network(widget.imageUrl, fit: BoxFit.fill),
+          ),
+        ),
+      ),
+    );
+  }
+}
