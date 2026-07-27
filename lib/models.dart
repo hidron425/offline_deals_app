@@ -85,6 +85,7 @@ class Shop {
 }
 
 class BannerAd {
+  final String id;               // ID документа
   final String title;
   final String description;
   final int color;
@@ -92,9 +93,12 @@ class BannerAd {
   final String discount;
   final String mallId;
   final String imageUrl;
-  final List<double>? cropRectData;   // 🆕 [left, top, width, height]
+  final List<double>? cropRectData;   // [left, top, width, height]
+  final int priority;
+  final bool isActive;
 
   BannerAd({
+    required this.id,
     required this.title,
     required this.description,
     required this.color,
@@ -103,29 +107,40 @@ class BannerAd {
     required this.mallId,
     this.imageUrl = '',
     this.cropRectData,
+    this.priority = 0,
+    this.isActive = true,
   });
 
   factory BannerAd.fromFirestore(DocumentSnapshot doc) {
     final data = doc.data() as Map<String, dynamic>;
+
+    // Парсим цвет: может быть int или строка вида "#RRGGBB"
     int colorInt = 0xFF6C63FF;
-    final colorStr = data['color'] as String?;
-    if (colorStr != null && colorStr.isNotEmpty) {
-      final hexCode = colorStr.replaceAll('#', '');
-      colorInt = int.parse(hexCode, radix: 16);
-      if (hexCode.length == 6) colorInt = 0xFF000000 | colorInt;
+    final rawColor = data['color'];
+    if (rawColor is int) {
+      colorInt = rawColor;
+    } else if (rawColor is String) {
+      final hex = rawColor.replaceAll('#', '');
+      final parsed = int.tryParse(hex, radix: 16);
+      if (parsed != null) {
+        colorInt = hex.length == 6 ? 0xFF000000 | parsed : parsed;
+      }
     }
 
     return BannerAd(
-      title: data['title'] ?? '',
-      description: data['description'] ?? '',
+      id: doc.id,
+      title: data['title'] as String? ?? '',
+      description: data['description'] as String? ?? '',
       color: colorInt,
-      targetShopId: data['targetShopId'] ?? '',
-      discount: data['discount'] ?? '',
-      mallId: data['mallId'] ?? '',
-      imageUrl: data['imageUrl'] ?? '',
+      targetShopId: data['targetShopId'] as String? ?? '',
+      discount: data['discount'] as String? ?? '',
+      mallId: data['mallId'] as String? ?? '',
+      imageUrl: data['imageUrl'] as String? ?? '',
       cropRectData: (data['cropRect'] as List?)
           ?.map((e) => (e as num).toDouble())
           .toList(),
+      priority: (data['priority'] as num?)?.toInt() ?? 0,
+      isActive: data['isActive'] as bool? ?? true,
     );
   }
 }

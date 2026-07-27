@@ -277,256 +277,320 @@ class _MainScreenState extends State<MainScreen> {
 
 // ----- КАРУСЕЛЬ БАННЕРОВ -----
 class BannersCarousel extends StatefulWidget {
-  final Function(Shop) onActivateShop;
-  final String? mallId;
-  const BannersCarousel({super.key, required this.onActivateShop, this.mallId});
+  final List<BannerAd> banners;
+  final Map<String, Shop> shopById;
+  final void Function(Shop shop)? onActivateShop;
+  final double height;
+
+  const BannersCarousel({
+    super.key,
+    required this.banners,
+    required this.shopById,
+    this.onActivateShop,
+    this.height = 160,
+  });
 
   @override
   State<BannersCarousel> createState() => _BannersCarouselState();
 }
 
 class _BannersCarouselState extends State<BannersCarousel> {
-  final PageController _pageController = PageController();
-  int _currentIndex = 0;
-  Timer? _timer;
-  List<BannerAd> _banners = [];
-  final Map<String, Shop> _shopCache = {};
+  late final PageController _pageController;
+  int _currentPage = 0;
+  Timer? _autoScrollTimer;
 
   @override
   void initState() {
     super.initState();
-    _loadBanners();
+    _pageController = PageController(viewportFraction: 0.92);
+    _startAutoScroll();
   }
 
-  void _loadBanners() {
-    FirebaseFirestore.instance.collection('banners').snapshots().listen((snapshot) {
-      final allBanners = snapshot.docs.map((doc) => BannerAd.fromFirestore(doc)).toList();
-      final filtered = widget.mallId != null
-          ? allBanners.where((b) => b.mallId == widget.mallId || b.mallId == 'all').toList()
-          : allBanners;
-      setState(() {
-        _banners = filtered;
-        if (_currentIndex >= _banners.length) _currentIndex = 0;
-      });
-      _restartTimer();
-      for (var banner in filtered) {
-        if (!_shopCache.containsKey(banner.targetShopId)) {
-          FirebaseFirestore.instance.collection('shops').doc(banner.targetShopId).get().then((doc) {
-            if (doc.exists) {
-              _shopCache[banner.targetShopId] = Shop.fromFirestore(doc);
-              if (mounted) setState(() {});
-            }
-          });
-        }
+  @override
+  void didUpdateWidget(covariant BannersCarousel oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.banners != widget.banners) {
+      _currentPage = 0;
+      if (_pageController.hasClients) {
+        _pageController.jumpToPage(0);
       }
-    });
-  }
-
-  void _restartTimer() {
-    _timer?.cancel();
-    if (_banners.length <= 1) return;
-    _timer = Timer.periodic(const Duration(seconds: 4), (timer) {
-      if (_pageController.hasClients && mounted && _banners.isNotEmpty) {
-        final next = (_currentIndex + 1) % _banners.length;
-        _pageController.animateToPage(next,
-            duration: const Duration(milliseconds: 400), curve: Curves.easeInOut);
-      }
-    });
-  }
-
-  void _onPageChanged(int index) {
-    setState(() => _currentIndex = index);
-    _restartTimer();
+      _restartAutoScroll();
+    }
   }
 
   @override
   void dispose() {
-    _timer?.cancel();
+    _autoScrollTimer?.cancel();
     _pageController.dispose();
     super.dispose();
   }
 
+  void _startAutoScroll() {
+    _autoScrollTimer?.cancel();
+    if (widget.banners.length <= 1) return;
+
+    _autoScrollTimer = Timer.periodic(const Duration(seconds: 4), (_) {
+      if (!mounted || !_pageController.hasClients || widget.banners.isEmpty) {
+        return;
+      }
+      final next = (_currentPage + 1) % widget.banners.length;
+      _pageController.animateToPage(
+        next,
+        duration: const Duration(milliseconds: 420),
+        curve: Curves.easeInOut,
+      );
+    });
+  }
+
+  void _restartAutoScroll() => _startAutoScroll();
+
+  Shop? _shopFor(BannerAd banner) {
+    final id = banner.targetShopId;
+    if (id.isEmpty) return null;
+    return widget.shopById[id];
+  }
+
   @override
   Widget build(BuildContext context) {
-    if (_banners.isEmpty) return const SizedBox.shrink();
-    return SizedBox(
-      height: 160,
-      child: Stack(
-        alignment: Alignment.bottomCenter,
-        children: [
-          PageView.builder(
+    final banners = widget.banners;
+
+    if (banners.isEmpty) {
+      return SizedBox(
+        height: widget.height,
+        child: Container(
+          margin: const EdgeInsets.symmetric(horizontal: 20),
+          decoration: BoxDecoration(
+            color: const Color(0xFFF4F5F8),
+            borderRadius: BorderRadius.circular(24),
+          ),
+          child: const Center(child: Text('Нет активных баннеров')),
+        ),
+      );
+    }
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        SizedBox(
+          height: widget.height,
+          child: PageView.builder(
             controller: _pageController,
-            onPageChanged: _onPageChanged,
-            itemCount: _banners.length,
+            itemCount: banners.length,
+            onPageChanged: (index) {
+              setState(() => _currentPage = index);
+              _restartAutoScroll();
+            },
             itemBuilder: (context, index) {
-              final banner = _banners[index];
-              final targetShop = _shopCache[banner.targetShopId];
-              return _BannerItem(
+              final banner = banners[index];
+              return BannerItem(
                 banner: banner,
-                targetShop: targetShop,
-                onActivate: widget.onActivateShop,
+                targetShop: _shopFor(banner),
+                onActivate: (shop) => widget.onActivateShop?.call(shop),
               );
             },
           ),
-          Positioned(
-            bottom: 8,
-            child: Row(
-              children: List.generate(
-                _banners.length,
-                (index) => GestureDetector(
-                  onTap: () {
-                    if (_pageController.hasClients) {
-                      _pageController.animateToPage(index,
-                          duration: const Duration(milliseconds: 300),
-                          curve: Curves.easeInOut);
-                    }
-                  },
-                  child: Container(
-                    margin: const EdgeInsets.symmetric(horizontal: 4),
-                    width: 8,
-                    height: 8,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: _currentIndex == index
-                          ? Colors.white
-                          : Colors.white70,
-                    ),
-                  ),
+        ),
+        if (banners.length > 1) ...[
+          const SizedBox(height: 10),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: List.generate(banners.length, (index) {
+              final active = index == _currentPage;
+              return AnimatedContainer(
+                duration: const Duration(milliseconds: 220),
+                margin: const EdgeInsets.symmetric(horizontal: 3),
+                width: active ? 18 : 6,
+                height: 6,
+                decoration: BoxDecoration(
+                  color: active
+                      ? const Color(0xFF6C63FF)
+                      : const Color(0xFF6C63FF).withOpacity(0.22),
+                  borderRadius: BorderRadius.circular(8),
                 ),
-              ),
-            ),
+              );
+            }),
           ),
         ],
-      ),
+      ],
     );
   }
 }
 
-class _BannerItem extends StatelessWidget {
+class BannerItem extends StatelessWidget {
   final BannerAd banner;
   final Shop? targetShop;
-  final Function(Shop) onActivate;
-  const _BannerItem({required this.banner, required this.targetShop, required this.onActivate});
+  final void Function(Shop shop) onActivate;
+
+  const BannerItem({
+    super.key,
+    required this.banner,
+    required this.targetShop,
+    required this.onActivate,
+  });
 
   @override
   Widget build(BuildContext context) {
-    if (targetShop == null) {
-      return Container(
-        margin: const EdgeInsets.symmetric(horizontal: 16),
+    final shop = targetShop;
+    final hasDiscount = banner.discount.trim().isNotEmpty;
+    final title = banner.title.isNotEmpty
+        ? banner.title
+        : (shop?.name ?? 'Акция');
+    final subtitle = banner.description.isNotEmpty
+        ? banner.description
+        : (shop?.category ?? '');
+
+    // Строим Rect из cropRectData
+    Rect? crop;
+    if (banner.cropRectData != null && banner.cropRectData!.length == 4) {
+      final d = banner.cropRectData!;
+      crop = Rect.fromLTWH(d[0], d[1], d[2], d[3]);
+    }
+
+    return GestureDetector(
+      onTap: shop == null ? null : () => onActivate(shop),
+      child: Container(
+        margin: const EdgeInsets.symmetric(horizontal: 8),
         decoration: BoxDecoration(
-          gradient: LinearGradient(colors: [Color(banner.color), Color(banner.color).withOpacity(0.8)]),
           borderRadius: BorderRadius.circular(24),
-        ),
-        child: const Center(child: CircularProgressIndicator()),
-      );
-    }
-
-    // Фон: если есть картинка – показываем её, иначе цветной градиент
-    Widget background;
-    if (banner.imageUrl.isNotEmpty) {
-      background = Image.network(
-        banner.imageUrl,
-        width: double.infinity,
-        height: double.infinity,
-        fit: BoxFit.cover,
-        errorBuilder: (context, error, stackTrace) => Container(
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              colors: [Color(banner.color), Color(banner.color).withOpacity(0.8)],
+          boxShadow: [
+            BoxShadow(
+              color: Color(banner.color).withOpacity(0.28),
+              blurRadius: 12,
+              offset: const Offset(0, 6),
             ),
-          ),
-        ),
-      );
-    } else {
-      background = Container(
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            colors: [Color(banner.color), Color(banner.color).withOpacity(0.8)],
-          ),
-        ),
-      );
-    }
-
-    return MouseRegion(
-      cursor: SystemMouseCursors.click,
-      child: GestureDetector(
-        onTap: () => _showDialog(context, targetShop!),
-        child: Container(
-          margin: const EdgeInsets.symmetric(horizontal: 16),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(28),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withOpacity(0.2),
-                blurRadius: 12,
-                offset: const Offset(0, 4),
-              ),
-            ],
-          ),
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(28),
-            child: Stack(
-              fit: StackFit.expand,
-              children: [
-                background,
-                // Затемняющая подложка для читаемости текста
-                Container(color: Colors.black.withOpacity(0.3)),
-                Padding(
-                  padding: const EdgeInsets.all(20),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        banner.title,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 22,
-                          fontWeight: FontWeight.bold,
-                          shadows: [Shadow(offset: Offset(0, 1), blurRadius: 4, color: Colors.black26)],
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        banner.description,
-                        style: const TextStyle(color: Colors.white70, fontSize: 14),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  void _showDialog(BuildContext context, Shop targetShop) {
-    showDialog(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: Text(banner.title),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(banner.description, style: const TextStyle(fontSize: 16)),
-            const SizedBox(height: 12),
-            Text('Магазин-партнёр: ${targetShop.name}'),
-            Text('Скидка: ${banner.discount}'),
-            Text('📍 ${targetShop.location}'),
           ],
         ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('Отмена')),
-          ElevatedButton(
-            onPressed: () {
-              Navigator.pop(dialogContext);
-              onActivate(targetShop);
-            },
-            child: const Text('Получить скидку'),
-          ),
-        ],
+        clipBehavior: Clip.antiAlias,
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            // ФОН: картинка с учётом cropRect ИЛИ градиент
+            Positioned.fill(
+              child: banner.imageUrl.trim().isNotEmpty
+                  ? BannerImagePreview(
+                      imageUrl: banner.imageUrl,
+                      cropRect: crop,
+                      width: double.infinity,
+                      height: double.infinity,
+                    )
+                  : Container(
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                          colors: [
+                            Color(banner.color),
+                            Color(banner.color).withOpacity(0.75),
+                          ],
+                        ),
+                      ),
+                    ),
+            ),
+
+            // затемнение для читаемости текста
+            if (banner.imageUrl.trim().isNotEmpty)
+              Positioned.fill(
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.centerLeft,
+                      end: Alignment.centerRight,
+                      colors: [
+                        Colors.black.withOpacity(0.55),
+                        Colors.black.withOpacity(0.12),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+
+            Padding(
+              padding: const EdgeInsets.all(20),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        if (hasDiscount)
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 10,
+                              vertical: 4,
+                            ),
+                            decoration: BoxDecoration(
+                              color: Colors.white.withOpacity(0.22),
+                              borderRadius: BorderRadius.circular(20),
+                            ),
+                            child: Text(
+                              banner.discount,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 13,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ),
+                        if (hasDiscount) const SizedBox(height: 8),
+                        Text(
+                          title,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 20,
+                            fontWeight: FontWeight.w800,
+                            height: 1.15,
+                          ),
+                        ),
+                        if (subtitle.isNotEmpty) ...[
+                          const SizedBox(height: 4),
+                          Text(
+                            subtitle,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: Colors.white.withOpacity(0.9),
+                              fontSize: 13,
+                            ),
+                          ),
+                        ],
+                        if (shop != null) ...[
+                          const SizedBox(height: 6),
+                          Text(
+                            shop.name,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: Colors.white.withOpacity(0.75),
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Container(
+                    width: 40,
+                    height: 40,
+                    decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(0.2),
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(
+                      Icons.arrow_forward_ios_rounded,
+                      color: Colors.white,
+                      size: 18,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -1009,6 +1073,9 @@ class _DealsGameScreenState extends State<DealsGameScreen> {
   Shop? _lastShop;
   String? _lastShopId;
 
+  List<BannerAd> _banners = [];
+  Map<String, Shop> _shopById = {};
+
   @override
   void initState() {
     super.initState();
@@ -1022,6 +1089,7 @@ class _DealsGameScreenState extends State<DealsGameScreen> {
   Future<void> _loadAll() async {
     await _loadUserLocation();
     await _loadShops();
+    await _loadBanners();
     await _loadProgress();
     setState(() => _isLoading = false);
     if (_selectedMallId == null) _showLocationPicker();
@@ -1057,7 +1125,15 @@ class _DealsGameScreenState extends State<DealsGameScreen> {
     setState(() {
       _allShops = _selectedMallId != null ? all.where((s) => s.mallId == _selectedMallId).toList() : all;
     });
+    _shopById = { for (final s in _allShops) s.id : s };
   }
+
+Future<void> _loadBanners() async {
+  final snap = await _firestore.collection('banners').where('isActive', isEqualTo: true).get();
+  setState(() {
+    _banners = snap.docs.map((d) => BannerAd.fromFirestore(d)).toList();
+  });
+}
 
   Future<void> _loadProgress() async {
     final doc = await _firestore.collection('user_progress').doc(_userId).get();
@@ -2139,9 +2215,11 @@ class _DealsGameScreenState extends State<DealsGameScreen> {
             ),
           ),
           BannersCarousel(
-            onActivateShop: (shop) async => _activateShop(shop),
-            mallId: _selectedMallId,
-          ),
+  banners: _banners,
+  shopById: _shopById,
+  onActivateShop: (shop) => _activateShop(shop),
+  height: 168,
+),
           const SizedBox(height: 16),
           _buildInlineMap(),   // ← мини-карта с подсветкой
           const SizedBox(height: 16),
