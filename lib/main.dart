@@ -432,12 +432,8 @@ class BannerItem extends StatelessWidget {
   Widget build(BuildContext context) {
     final shop = targetShop;
     final hasDiscount = banner.discount.trim().isNotEmpty;
-    final title = banner.title.isNotEmpty
-        ? banner.title
-        : (shop?.name ?? 'Акция');
-    final subtitle = banner.description.isNotEmpty
-        ? banner.description
-        : (shop?.category ?? '');
+    final title = banner.title.isNotEmpty ? banner.title : (shop?.name ?? 'Акция');
+    final subtitle = banner.description.isNotEmpty ? banner.description : (shop?.category ?? '');
 
     // Строим Rect из cropRectData
     Rect? crop;
@@ -464,7 +460,7 @@ class BannerItem extends StatelessWidget {
         child: Stack(
           fit: StackFit.expand,
           children: [
-            // ФОН: картинка с учётом cropRect ИЛИ градиент
+            // ФОН с обрезкой или градиент
             Positioned.fill(
               child: banner.imageUrl.trim().isNotEmpty
                   ? BannerImagePreview(
@@ -487,7 +483,7 @@ class BannerItem extends StatelessWidget {
                     ),
             ),
 
-            // затемнение для читаемости текста
+            // Затемнение
             if (banner.imageUrl.trim().isNotEmpty)
               Positioned.fill(
                 child: DecoratedBox(
@@ -504,6 +500,7 @@ class BannerItem extends StatelessWidget {
                 ),
               ),
 
+            // Контент
             Padding(
               padding: const EdgeInsets.all(20),
               child: Row(
@@ -515,21 +512,14 @@ class BannerItem extends StatelessWidget {
                       children: [
                         if (hasDiscount)
                           Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 10,
-                              vertical: 4,
-                            ),
+                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                             decoration: BoxDecoration(
                               color: Colors.white.withOpacity(0.22),
                               borderRadius: BorderRadius.circular(20),
                             ),
                             child: Text(
                               banner.discount,
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 13,
-                                fontWeight: FontWeight.w700,
-                              ),
+                              style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w700),
                             ),
                           ),
                         if (hasDiscount) const SizedBox(height: 8),
@@ -537,12 +527,7 @@ class BannerItem extends StatelessWidget {
                           title,
                           maxLines: 2,
                           overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 20,
-                            fontWeight: FontWeight.w800,
-                            height: 1.15,
-                          ),
+                          style: const TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.w800, height: 1.15),
                         ),
                         if (subtitle.isNotEmpty) ...[
                           const SizedBox(height: 4),
@@ -550,10 +535,7 @@ class BannerItem extends StatelessWidget {
                             subtitle,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              color: Colors.white.withOpacity(0.9),
-                              fontSize: 13,
-                            ),
+                            style: TextStyle(color: Colors.white.withOpacity(0.9), fontSize: 13),
                           ),
                         ],
                         if (shop != null) ...[
@@ -562,11 +544,7 @@ class BannerItem extends StatelessWidget {
                             shop.name,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              color: Colors.white.withOpacity(0.75),
-                              fontSize: 12,
-                              fontWeight: FontWeight.w600,
-                            ),
+                            style: TextStyle(color: Colors.white.withOpacity(0.75), fontSize: 12, fontWeight: FontWeight.w600),
                           ),
                         ],
                       ],
@@ -576,15 +554,8 @@ class BannerItem extends StatelessWidget {
                   Container(
                     width: 40,
                     height: 40,
-                    decoration: BoxDecoration(
-                      color: Colors.white.withOpacity(0.2),
-                      shape: BoxShape.circle,
-                    ),
-                    child: const Icon(
-                      Icons.arrow_forward_ios_rounded,
-                      color: Colors.white,
-                      size: 18,
-                    ),
+                    decoration: BoxDecoration(color: Colors.white.withOpacity(0.2), shape: BoxShape.circle),
+                    child: const Icon(Icons.arrow_forward_ios_rounded, color: Colors.white, size: 18),
                   ),
                 ],
               ),
@@ -2618,8 +2589,7 @@ class _BannerImagePreviewState extends State<BannerImagePreview> {
     }));
   }
 
-  @override
-  Widget build(BuildContext context) {
+  Widget _buildWithSize(double maxW, double maxH) {
     if (widget.cropRect == null ||
         widget.cropRect!.isEmpty ||
         widget.cropRect!.width == 0 ||
@@ -2627,30 +2597,45 @@ class _BannerImagePreviewState extends State<BannerImagePreview> {
       return Image.network(
         widget.imageUrl,
         fit: BoxFit.cover,
-        width: widget.width,
-        height: widget.height,
+        width: maxW,
+        height: maxH,
+        errorBuilder: (_, __, ___) => Container(color: Colors.grey[300]),
       );
     }
 
     final crop = widget.cropRect!;
-    final previewScale = widget.width / crop.width;
+    final previewScale = maxW / crop.width;
 
     return ClipRect(
-      child: OverflowBox(
-        alignment: Alignment.topLeft,
-        minWidth: 0,
-        minHeight: 0,
-        maxWidth: double.infinity,
-        maxHeight: double.infinity,
-        child: Transform.translate(
-          offset: Offset(-crop.left * previewScale, -crop.top * previewScale),
-          child: SizedBox(
+      child: Stack(
+        children: [
+          Positioned(
+            left: -crop.left * previewScale,
+            top: -crop.top * previewScale,
             width: _imageSize!.width * previewScale,
             height: _imageSize!.height * previewScale,
-            child: Image.network(widget.imageUrl, fit: BoxFit.fill),
+            child: Image.network(
+              widget.imageUrl,
+              fit: BoxFit.fill,
+              errorBuilder: (_, __, ___) => Container(color: Colors.grey[300]),
+            ),
           ),
-        ),
+        ],
       ),
     );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (widget.width.isInfinite || widget.height.isInfinite) {
+      return LayoutBuilder(
+        builder: (context, constraints) => _buildWithSize(
+          constraints.maxWidth.isFinite ? constraints.maxWidth : widget.width,
+          constraints.maxHeight.isFinite ? constraints.maxHeight : widget.height,
+        ),
+      );
+    } else {
+      return _buildWithSize(widget.width, widget.height);
+    }
   }
 }

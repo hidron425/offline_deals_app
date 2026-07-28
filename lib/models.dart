@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/material.dart';
 
 class Shop {
   final String id;
@@ -143,4 +144,10 @@ class BannerAd {
       isActive: data['isActive'] as bool? ?? true,
     );
   }
+/// Удобный геттер — возвращает Rect? из cropRectData
+Rect? get cropRect {
+  final data = cropRectData;
+  if (data == null || data.length != 4) return null;
+  return Rect.fromLTWH(data[0], data[1], data[2], data[3]);
+}
 }
