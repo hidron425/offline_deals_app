@@ -429,22 +429,33 @@ class BannerItem extends StatelessWidget {
   });
 
   @override
-  Widget build(BuildContext context) {
-    final shop = targetShop;
-    final hasDiscount = banner.discount.trim().isNotEmpty;
-    final title = banner.title.isNotEmpty ? banner.title : (shop?.name ?? 'Акция');
-    final subtitle = banner.description.isNotEmpty ? banner.description : (shop?.category ?? '');
+Widget build(BuildContext context) {
+  final shop = targetShop;
+  final hasDiscount = banner.discount.trim().isNotEmpty;
+  final title = banner.title.isNotEmpty ? banner.title : (shop?.name ?? 'Акция');
+  final subtitle = banner.description.isNotEmpty ? banner.description : (shop?.category ?? '');
 
-    // Строим Rect из cropRectData
-    Rect? crop;
-    if (banner.cropRectData != null && banner.cropRectData!.length == 4) {
-      final d = banner.cropRectData!;
-      crop = Rect.fromLTWH(d[0], d[1], d[2], d[3]);
-    }
+  Rect? crop;
+  if (banner.cropRectData != null && banner.cropRectData!.length == 4) {
+    final d = banner.cropRectData!;
+    crop = Rect.fromLTWH(d[0], d[1], d[2], d[3]);
+  }
 
-    return GestureDetector(
-      onTap: shop == null ? null : () => onActivate(shop),
-      child: Container(
+  return GestureDetector(
+    onTap: shop == null ? null : () async {
+      // Логируем клик по баннеру
+      final user = FirebaseAuth.instance.currentUser;
+      if (user != null) {
+        await FirebaseFirestore.instance.collection('banner_clicks').add({
+          'bannerId': banner.id,
+          'userId': user.uid,
+          'shopId': shop!.id,
+          'timestamp': FieldValue.serverTimestamp(),
+        });
+      }
+      onActivate(shop!);
+    },
+    child: Container(
         margin: const EdgeInsets.symmetric(horizontal: 8),
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(24),
@@ -1025,6 +1036,14 @@ class DealsGameScreen extends StatefulWidget {
 class _DealsGameScreenState extends State<DealsGameScreen> {
   final _firestore = FirebaseFirestore.instance;
   String? _hoveredShopId;   // ID магазина, на который наведён курсор
+  // Поиск и фильтр
+String _searchQuery = '';
+String? _selectedCategory;
+Shop? _selectedRouteShop;   // выбранный магазин для маршрута
+final TextEditingController _mapSearchController = TextEditingController();
+
+// Точка входа (можно загружать из Firestore или задать константы)
+Offset _entrancePosition = const Offset(0.5, 0.8); // в долях от размеров карты (0..1)
 
   int _completedSteps = 0;
   final int _totalSteps = 5;
@@ -1055,6 +1074,9 @@ class _DealsGameScreenState extends State<DealsGameScreen> {
 
     _userId = FirebaseAuth.instance.currentUser!.uid;
     _loadAll();
+    FirebaseFirestore.instance.collection('user_progress').doc(_userId).update({
+  'lastActive': FieldValue.serverTimestamp(),
+});
   }
 
   Future<void> _loadAll() async {
@@ -1402,77 +1424,235 @@ Future<void> _loadBanners() async {
   }
 
   // ----- МИНИ-КАРТА НА ГЛАВНОМ ЭКРАНЕ (С ПОДСВЕТКОЙ) -----
- Widget _buildInlineMap() {
-  return SizedBox(
-    height: 200,
-    child: LayoutBuilder(
-      builder: (context, constraints) {
-        const double imageWidth = 2045;
-        const double imageHeight = 731;
-        final double scaleX = constraints.maxWidth / imageWidth;
-        final double scaleY = constraints.maxHeight / imageHeight;
-        final double scale = math.min(scaleX, scaleY);
-        final double displayWidth = imageWidth * scale;
-        final double displayHeight = imageHeight * scale;
-        final double offsetX = (constraints.maxWidth - displayWidth) / 2;
-        final double offsetY = (constraints.maxHeight - displayHeight) / 2;
+ Widget _buildEnhancedMap() {
+  // Уникальные категории для фильтра
+  final categories = _allShops
+      .map((s) => s.category)
+      .where((c) => c.isNotEmpty)
+      .toSet()
+      .toList()
+    ..sort();
 
-        return InteractiveViewer(
-          minScale: 0.5,
-          maxScale: 2.0,
-          child: Stack(
-            children: [
-              // Фоновое изображение
-              Image.asset(
-                'assets/images/mall_map.png',
-                width: constraints.maxWidth,
-                height: constraints.maxHeight,
-                fit: BoxFit.contain,
+  // Фильтрованные магазины
+  List<Shop> visibleShops = _allShops.where((s) {
+    if (_searchQuery.isNotEmpty) {
+      return s.name.toLowerCase().contains(_searchQuery.toLowerCase());
+    }
+    return true;
+  }).where((s) {
+    if (_selectedCategory != null) return s.category == _selectedCategory;
+    return true;
+  }).toList();
+
+  return Column(
+    children: [
+      // Панель поиска и фильтра
+      Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        child: Row(
+          children: [
+            Expanded(
+              child: TextField(
+                controller: _mapSearchController,
+                decoration: InputDecoration(
+                  hintText: 'Поиск магазина',
+                  prefixIcon: const Icon(Icons.search),
+                  suffixIcon: _searchQuery.isNotEmpty
+                      ? IconButton(
+                          icon: const Icon(Icons.clear),
+                          onPressed: () {
+                            _mapSearchController.clear();
+                            setState(() => _searchQuery = '');
+                          },
+                        )
+                      : null,
+                  filled: true,
+                  fillColor: Colors.white,
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(30),
+                    borderSide: BorderSide.none,
+                  ),
+                ),
+                onChanged: (val) => setState(() => _searchQuery = val),
               ),
-              // Подсветка только при наведении (и если размеры заданы)
-              ..._allShops.where((s) => s.mapX != null && s.mapY != null).map((shop) {
-                final bool isHovered = _hoveredShopId == shop.id;
-                // Если не наведён – ничего не рисуем
-                if (!isHovered) return const SizedBox.shrink();
+            ),
+            const SizedBox(width: 8),
+            // Фильтр по категории
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(30),
+              ),
+              child: DropdownButtonHideUnderline(
+                child: DropdownButton<String?>(
+                  value: _selectedCategory,
+                  hint: const Text('Все категории', style: TextStyle(fontSize: 14)),
+                  isDense: true,
+                  items: [
+                    const DropdownMenuItem<String?>(
+                      value: null,
+                      child: Text('Все'),
+                    ),
+                    ...categories.map((cat) => DropdownMenuItem<String?>(
+                          value: cat,
+                          child: Text(cat),
+                        )),
+                  ],
+                  onChanged: (val) => setState(() => _selectedCategory = val),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+      const SizedBox(height: 8),
+      // Сама карта
+      SizedBox(
+        height: 300, // можно увеличить для маршрута
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            const double imageWidth = 2045;
+            const double imageHeight = 731;
+            final double scaleX = constraints.maxWidth / imageWidth;
+            final double scaleY = constraints.maxHeight / imageHeight;
+            final double scale = math.min(scaleX, scaleY);
+            final double displayWidth = imageWidth * scale;
+            final double displayHeight = imageHeight * scale;
+            final double offsetX = (constraints.maxWidth - displayWidth) / 2;
+            final double offsetY = (constraints.maxHeight - displayHeight) / 2;
 
-                // Проверяем, заданы ли размеры
-                if (shop.mapWidth == null || shop.mapHeight == null ||
-                    shop.mapWidth! <= 0 || shop.mapHeight! <= 0) {
-                  // Размеры не заданы – не подсвечиваем (или можно нарисовать круг-заглушку, но вы просили убрать иконки)
-                  return const SizedBox.shrink();
-                }
+            return Stack(
+              children: [
+                // Фоновое изображение
+                Image.asset(
+                  'assets/images/mall_map.png',
+                  width: constraints.maxWidth,
+                  height: constraints.maxHeight,
+                  fit: BoxFit.contain,
+                ),
+                // Слой магазинов (иконки/подсветка)
+                ...visibleShops.where((s) => s.mapX != null && s.mapY != null).map((shop) {
+                  final bool isHovered = _hoveredShopId == shop.id;
+                  final bool isRouteTarget = (_selectedRouteShop?.id == shop.id);
+                  if (shop.mapWidth == null || shop.mapHeight == null ||
+                      shop.mapWidth! <= 0 || shop.mapHeight! <= 0) {
+                    return const SizedBox.shrink();
+                  }
 
-                double w = shop.mapWidth! * imageWidth;
-                double h = shop.mapHeight! * imageHeight;
-                final double xOnImage = shop.mapX! * imageWidth;
-                final double yOnImage = shop.mapY! * imageHeight;
-                final double left = (xOnImage - w / 2) * scale + offsetX;
-                final double top = (yOnImage - h / 2) * scale + offsetY;
-                final double rectWidth = w * scale;
-                final double rectHeight = h * scale;
+                  double w = shop.mapWidth! * imageWidth;
+                  double h = shop.mapHeight! * imageHeight;
+                  final double xOnImage = shop.mapX! * imageWidth;
+                  final double yOnImage = shop.mapY! * imageHeight;
+                  final double left = (xOnImage - w / 2) * scale + offsetX;
+                  final double top = (yOnImage - h / 2) * scale + offsetY;
+                  final double rectWidth = w * scale;
+                  final double rectHeight = h * scale;
 
-                return Positioned(
-                  left: left,
-                  top: top,
-                  width: rectWidth,
-                  height: rectHeight,
-                  child: IgnorePointer(
-                    child: AnimatedContainer(
-                      duration: const Duration(milliseconds: 200),
-                      decoration: BoxDecoration(
-                        color: Colors.orange.withOpacity(0.3),
-                        border: Border.all(color: Colors.orange, width: 2),
-                        borderRadius: BorderRadius.circular(2),
+                  return Positioned(
+                    left: left,
+                    top: top,
+                    width: rectWidth,
+                    height: rectHeight,
+                    child: GestureDetector(
+                      onTap: () {
+                        setState(() {
+                          _selectedRouteShop = shop;
+                          _hoveredShopId = shop.id; // показываем подсветку
+                        });
+                      },
+                      child: MouseRegion(
+                        onEnter: (_) => setState(() => _hoveredShopId = shop.id),
+                        onExit: (_) => setState(() => _hoveredShopId = null),
+                        child: AnimatedContainer(
+                          duration: const Duration(milliseconds: 200),
+                          decoration: BoxDecoration(
+                            color: (isHovered || isRouteTarget)
+                                ? Colors.orange.withOpacity(0.4)
+                                : Colors.transparent,
+                            border: Border.all(
+                              color: isRouteTarget
+                                  ? Colors.red
+                                  : (isHovered ? Colors.orange : Colors.transparent),
+                              width: 2,
+                            ),
+                            borderRadius: BorderRadius.circular(2),
+                          ),
+                        ),
+                      ),
+                    ),
+                  );
+                }).toList(),
+                // Слой маршрута
+                if (_selectedRouteShop != null)
+                  CustomPaint(
+                    size: Size(constraints.maxWidth, constraints.maxHeight),
+                    painter: _RoutePainter(
+                      from: Offset(
+                        _entrancePosition.dx * imageWidth * scale + offsetX,
+                        _entrancePosition.dy * imageHeight * scale + offsetY,
+                      ),
+                      to: Offset(
+                        _selectedRouteShop!.mapX! * imageWidth * scale + offsetX,
+                        _selectedRouteShop!.mapY! * imageHeight * scale + offsetY,
                       ),
                     ),
                   ),
-                );
-              }).toList(),
-            ],
+              ],
+            );
+          },
+        ),
+      ),
+      // Кнопка сброса маршрута
+      if (_selectedRouteShop != null)
+        Padding(
+          padding: const EdgeInsets.only(top: 4),
+          child: TextButton.icon(
+            icon: const Icon(Icons.close, size: 16),
+            label: Text('Сбросить маршрут до ${_selectedRouteShop!.name}'),
+            onPressed: () => setState(() => _selectedRouteShop = null),
           ),
-        );
-      },
-    ),
+        ),
+        // ... начало метода до карты ...
+
+      // Кнопка сброса маршрута
+      if (_selectedRouteShop != null)
+        Padding(
+          padding: const EdgeInsets.only(top: 4),
+          child: TextButton.icon(
+            icon: const Icon(Icons.close, size: 16),
+            label: Text('Сбросить маршрут до ${_selectedRouteShop!.name}'),
+            onPressed: () => setState(() {
+              _selectedRouteShop = null;
+              _hoveredShopId = null;
+            }),
+          ),
+        ),
+
+      // Информация о выбранном магазине и кнопка "В путь"
+      if (_selectedRouteShop != null)
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          child: Card(
+            color: Colors.orange.shade50,
+            child: ListTile(
+              leading: Text(_selectedRouteShop!.icon, style: const TextStyle(fontSize: 32)),
+              title: Text(_selectedRouteShop!.name),
+              subtitle: Text(_selectedRouteShop!.discount),
+              trailing: ElevatedButton(
+                onPressed: () {
+                  _activateShop(_selectedRouteShop!);
+                },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF6C63FF),
+                  foregroundColor: Colors.white,
+                ),
+                child: const Text('В путь'),
+              ),
+            ),
+          ),
+        ),
+    ],
   );
 }
   // ----- ОСТАЛЬНЫЕ МЕТОДЫ КВЕСТА (без изменений) -----
@@ -2116,42 +2296,44 @@ Future<void> _loadBanners() async {
   }
 
   @override
-  Widget build(BuildContext context) {
-    if (_isLoading) {
-      return const GradientScaffold(
-        appBar: PreferredSize(preferredSize: Size.fromHeight(56), child: SizedBox.shrink()),
-        body: Center(child: CircularProgressIndicator()),
-      );
-    }
-    if (_selectedMallId == null) {
-      return GradientScaffold(
-        appBar: AppBar(title: const Text('Offline Deals')),
-        body: const Center(
-          child: Padding(
-            padding: EdgeInsets.all(32),
-            child: Text(
-              'Выберите город и торговый центр',
-              style: TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold),
-              textAlign: TextAlign.center,
-            ),
+Widget build(BuildContext context) {
+  if (_isLoading) {
+    return const GradientScaffold(
+      appBar: PreferredSize(preferredSize: Size.fromHeight(56), child: SizedBox.shrink()),
+      body: Center(child: CircularProgressIndicator()),
+    );
+  }
+  if (_selectedMallId == null) {
+    return GradientScaffold(
+      appBar: AppBar(title: const Text('Offline Deals')),
+      body: const Center(
+        child: Padding(
+          padding: EdgeInsets.all(32),
+          child: Text(
+            'Выберите город и торговый центр',
+            style: TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold),
+            textAlign: TextAlign.center,
           ),
         ),
-      );
-    }
-
-    return GradientScaffold(
-      appBar: AppBar(
-        title: const Text('Offline Deals'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.location_on),
-            onPressed: () => _showLocationPicker(isChanging: true),
-            tooltip: 'Сменить город/ТЦ',
-          ),
-          IconButton(onPressed: _fullReset, icon: const Icon(Icons.refresh), tooltip: 'Сброс прогресса'),
-        ],
       ),
-      body: Column(
+    );
+  }
+
+  return GradientScaffold(
+    appBar: AppBar(
+      title: const Text('Offline Deals'),
+      actions: [
+        IconButton(
+          icon: const Icon(Icons.location_on),
+          onPressed: () => _showLocationPicker(isChanging: true),
+          tooltip: 'Сменить город/ТЦ',
+        ),
+        IconButton(onPressed: _fullReset, icon: const Icon(Icons.refresh), tooltip: 'Сброс прогресса'),
+      ],
+    ),
+    // Оборачиваем всё в SingleChildScrollView, чтобы не было переполнения
+    body: SingleChildScrollView(
+      child: Column(
         children: [
           Padding(
             padding: const EdgeInsets.all(16),
@@ -2185,20 +2367,24 @@ Future<void> _loadBanners() async {
               ],
             ),
           ),
+          // Баннер (можно добавить отступы при необходимости)
           BannersCarousel(
-  banners: _banners,
-  shopById: _shopById,
-  onActivateShop: (shop) => _activateShop(shop),
-  height: 168,
-),
+            banners: _banners,
+            shopById: _shopById,
+            onActivateShop: (shop) => _activateShop(shop),
+            height: 168,
+          ),
           const SizedBox(height: 16),
-          _buildInlineMap(),   // ← мини-карта с подсветкой
+          // 🆕 Улучшенная карта
+          _buildEnhancedMap(),
           const SizedBox(height: 16),
-          Expanded(child: _buildMainContent()),
+          // Контент больше не растягивается на весь экран
+          _buildMainContent(),
         ],
       ),
-    );
-  }
+    ),
+  );
+}
 
   Widget _stepCircle(int index) {
     bool completed = index < _completedSteps;
@@ -2638,4 +2824,27 @@ class _BannerImagePreviewState extends State<BannerImagePreview> {
       return _buildWithSize(widget.width, widget.height);
     }
   }
+}
+  class _RoutePainter extends CustomPainter {
+  final Offset from;
+  final Offset to;
+  _RoutePainter({required this.from, required this.to});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = Colors.red
+      ..strokeWidth = 3.0
+      ..style = PaintingStyle.stroke;
+    canvas.drawLine(from, to, paint);
+
+    // Кружки на концах
+    final circlePaint = Paint()..color = Colors.red;
+    canvas.drawCircle(from, 6, circlePaint);
+    canvas.drawCircle(to, 6, circlePaint);
+  }
+
+  @override
+  bool shouldRepaint(covariant _RoutePainter oldDelegate) =>
+      oldDelegate.from != from || oldDelegate.to != to;
 }
