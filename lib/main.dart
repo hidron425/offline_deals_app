@@ -9,6 +9,8 @@ import 'package:cloud_functions/cloud_functions.dart';
 import 'mall_map_screen.dart';
 import 'models.dart';
 import 'dart:math' as math;
+import 'quest_history_screen.dart';
+import 'package:share_plus/share_plus.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -2001,6 +2003,36 @@ Future<void> _loadBanners() async {
       'isPathActive': true,
     });
 
+    // ---------- Реферальный бонус ----------
+    final userDoc = await _firestore.collection('user_progress').doc(_userId).get();
+    final referredBy = userDoc.data()?['referredBy'] as String?;
+    if (referredBy != null) {
+      final referrerBonus = {
+        'title': 'Реферальный бонус',
+        'message': 'Ваш друг завершил первый квест!',
+        'icon': '🎁',
+      };
+      final selfBonus = {
+        'title': 'Бонус за использование кода',
+        'message': 'Вы завершили первый квест по приглашению!',
+        'icon': '🎉',
+      };
+
+      await _firestore.collection('user_progress').doc(referredBy).update({
+        'pendingBonuses': FieldValue.arrayUnion([referrerBonus]),
+      });
+      await _firestore.collection('user_progress').doc(_userId).update({
+        'pendingBonuses': FieldValue.arrayUnion([selfBonus]),
+        'referredBy': FieldValue.delete(),
+      });
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Поздравляем! Вы и ваш друг получили бонусы!')),
+        );
+      }
+    }
+
     setState(() {
       _completedSteps = 0;
       _usedShopIds.clear();
@@ -2440,12 +2472,17 @@ class _ProfileScreenState extends State<ProfileScreen> {
   List<String> _subscribedShops = [];
   Map<String, String> _shopNames = {};
 
+  // Реферальная система
+  String? _referralCode;
+  String? _referralStatus;
+
   @override
   void initState() {
     super.initState();
     _userId = FirebaseAuth.instance.currentUser!.uid;
     _loadPushSettings();
     _loadSubscribedShops();
+    _ensureReferralCode();
   }
 
   Future<void> _loadPushSettings() async {
@@ -2554,9 +2591,96 @@ class _ProfileScreenState extends State<ProfileScreen> {
       'pendingBonuses': FieldValue.arrayRemove([ruleId]),
       'claimedBonuses': FieldValue.arrayUnion([ruleId]),
     });
-
     setState(() {});
   }
+
+  // ================== Реферальная система ==================
+  Future<void> _ensureReferralCode() async {
+    final doc = await _firestore.collection('user_progress').doc(_userId).get();
+    final data = doc.data() ?? {};
+    if (data['referralCode'] == null) {
+      final code = _generateReferralCode();
+      await _firestore.collection('user_progress').doc(_userId).set({
+        'referralCode': code,
+      }, SetOptions(merge: true));
+      setState(() => _referralCode = code);
+    } else {
+      setState(() => _referralCode = data['referralCode'] as String);
+    }
+    if (data['referredBy'] != null) {
+      setState(() => _referralStatus = 'pending');
+    }
+  }
+
+  String _generateReferralCode() {
+    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+    final random = DateTime.now().millisecondsSinceEpoch.toString();
+    return List.generate(6, (index) {
+      final charIndex = (random.codeUnitAt(index % random.length) + index) % chars.length;
+      return chars[charIndex];
+    }).join();
+  }
+
+  Future<void> _showEnterReferralDialog() async {
+    final controller = TextEditingController();
+    await showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Введите код друга'),
+        content: TextField(
+          controller: controller,
+          textCapitalization: TextCapitalization.characters,
+          decoration: const InputDecoration(
+            hintText: 'ABC123',
+            border: OutlineInputBorder(),
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Отмена')),
+          ElevatedButton(
+            onPressed: () async {
+              final code = controller.text.trim().toUpperCase();
+              if (code.isEmpty) return;
+              final snap = await _firestore
+                  .collection('user_progress')
+                  .where('referralCode', isEqualTo: code)
+                  .limit(1)
+                  .get();
+              if (snap.docs.isEmpty) {
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Код не найден')),
+                  );
+                }
+                return;
+              }
+              final referrerId = snap.docs.first.id;
+              if (referrerId == _userId) {
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Нельзя использовать свой код')),
+                  );
+                }
+                return;
+              }
+              await _firestore.collection('user_progress').doc(_userId).set({
+                'referredBy': referrerId,
+              }, SetOptions(merge: true));
+              Navigator.pop(ctx);
+              if (mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Код применён! Завершите первый квест, чтобы получить бонус.')),
+                );
+                setState(() => _referralStatus = 'pending');
+              }
+            },
+            child: const Text('Применить'),
+          ),
+        ],
+      ),
+    );
+  }
+  // ================== Конец реферальной системы ==================
 
   @override
   Widget build(BuildContext context) {
@@ -2594,6 +2718,21 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     foregroundColor: Colors.white,
                   ),
                   child: const Text('Выйти'),
+                ),
+                const SizedBox(height: 8),
+                ElevatedButton.icon(
+                  onPressed: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (_) => const QuestHistoryScreen()),
+                    );
+                  },
+                  icon: const Icon(Icons.history),
+                  label: const Text('Мои достижения'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.amber.shade700,
+                    foregroundColor: Colors.white,
+                  ),
                 ),
                 const SizedBox(height: 20),
               ],
@@ -2662,6 +2801,75 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 },
               );
             },
+          ),
+          const SizedBox(height: 16),
+          // Карточка "Пригласи друга"
+          Card(
+            margin: const EdgeInsets.all(16),
+            color: Colors.white.withOpacity(0.9),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('🎁 Пригласи друга',
+                      style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 8),
+                  const Text('Ваш персональный код:'),
+                  const SizedBox(height: 4),
+                  Text(
+                    _referralCode ?? '------',
+                    style: const TextStyle(fontSize: 28, fontWeight: FontWeight.bold, letterSpacing: 4),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Поделитесь кодом с другом. Когда он завершит первый квест, вы оба получите бонус!',
+                    style: TextStyle(color: Colors.grey.shade600, fontSize: 13),
+                  ),
+                  if (_referralStatus == 'pending')
+                    Padding(
+                      padding: const EdgeInsets.only(top: 8),
+                      child: Text(
+                        'Вы ввели код друга. Бонус будет начислен после завершения первого квеста.',
+                        style: TextStyle(color: Colors.orange.shade700, fontSize: 13),
+                      ),
+                    ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: ElevatedButton.icon(
+                          onPressed: () {
+                            final text =
+                                'Присоединяйся к OfflineDeals и получи скидки!\nМой код: $_referralCode';
+                            Share.share(text);
+                          },
+                          icon: const Icon(Icons.share),
+                          label: const Text('Поделиться'),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.green,
+                            foregroundColor: Colors.white,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: ElevatedButton.icon(
+                          onPressed: _showEnterReferralDialog,
+                          icon: const Icon(Icons.edit),
+                          label: const Text('Ввести код'),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFF6C63FF),
+                            foregroundColor: Colors.white,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
           ),
           const SizedBox(height: 20),
           const Padding(

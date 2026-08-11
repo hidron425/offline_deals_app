@@ -68,3 +68,65 @@ exports.addPushToQueue = functions.https.onCall(async (data, context) => {
   await batch.commit();
   return { success: true, count: userIds.length };
 });
+
+// ========== 3. Рассылка пуша по сегменту (вызывается из админ-панели) ==========
+exports.sendPushToSegment = functions.https.onCall(async (data, context) => {
+  const { segment, message, scheduledAt } = data;
+  
+  // Строим запрос к user_progress
+  let query = db.collection('user_progress');
+
+  if (segment.city) {
+    query = query.where('selectedCity', '==', segment.city);
+  }
+  if (segment.mall) {
+    query = query.where('selectedMall', '==', segment.mall);
+  }
+  // Firestore не поддерживает одновременно несколько range-фильтров на разные поля.
+  // Если понадобятся оба фильтра, нужно делать несколько запросов и объединять результаты.
+  // Для простоты примера применим только один из них.
+  if (segment.minStepsCompleted != null) {
+    query = query.where('completedSteps', '>=', segment.minStepsCompleted);
+  }
+  if (segment.activeWithinDays != null) {
+    const activeSince = new Date();
+    activeSince.setDate(activeSince.getDate() - segment.activeWithinDays);
+    query = query.where('lastActive', '>=', admin.firestore.Timestamp.fromDate(activeSince));
+  }
+
+  const snapshot = await query.get();
+  const tokens = [];
+  snapshot.forEach(doc => {
+    const data = doc.data();
+    if (data.fcmToken && data.blocked !== true) {   // не отправляем заблокированным
+      tokens.push(data.fcmToken);
+    }
+  });
+
+  if (tokens.length === 0) {
+    return { success: false, error: 'Нет подходящих получателей' };
+  }
+
+  if (scheduledAt) {
+    // Отложенная отправка – сохраняем задание
+    await db.collection('scheduled_notifications').add({
+      tokens: tokens,
+      title: message.title,
+      body: message.body,
+      scheduledAt: admin.firestore.Timestamp.fromDate(new Date(scheduledAt)),
+      status: 'pending'
+    });
+  } else {
+    // Мгновенная отправка
+    const payload = {
+      notification: {
+        title: message.title,
+        body: message.body,
+      },
+      tokens: tokens
+    };
+    await admin.messaging().sendMulticast(payload);
+  }
+
+  return { success: true, count: tokens.length };
+});
