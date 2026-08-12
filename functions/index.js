@@ -130,3 +130,50 @@ exports.sendPushToSegment = functions.https.onCall(async (data, context) => {
 
   return { success: true, count: tokens.length };
 });
+exports.verifyQRToken = functions.https.onCall(async (data, context) => {
+  const { token, shopId } = data;
+  if (!token || !shopId) {
+    throw new functions.https.HttpsError('invalid-argument', 'Token and shopId required');
+  }
+
+  const qrSnap = await db.collection('qr_tokens')
+    .where('token', '==', token)
+    .where('status', '==', 'pending')
+    .limit(1)
+    .get();
+
+  if (qrSnap.empty) {
+    throw new functions.https.HttpsError('not-found', 'Token not found or already used');
+  }
+
+  const qrDoc = qrSnap.docs[0];
+  const qrData = qrDoc.data();
+
+  if (qrData.shopId !== shopId) {
+    throw new functions.https.HttpsError('permission-denied', 'Token does not belong to this shop');
+  }
+
+  const createdAt = qrData.createdAt.toDate();
+  const now = new Date();
+  const diffMinutes = (now - createdAt) / (1000 * 60);
+  if (diffMinutes > 5) {
+    // Можно просто пометить как expired, но сейчас просто отклоняем
+    throw new functions.https.HttpsError('deadline-exceeded', 'Token expired');
+  }
+
+  // Помечаем использованным
+  await qrDoc.ref.update({
+    status: 'used',
+    usedAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
+
+  // Можно сразу добавить запись в sales (как альтернатива _activateShop)
+  await db.collection('sales').add({
+    shopId: shopId,
+    userId: qrData.userId,
+    step: 1, // или реальный шаг, но для простоты 1
+    timestamp: admin.firestore.FieldValue.serverTimestamp(),
+  });
+
+  return { success: true, userId: qrData.userId };
+});

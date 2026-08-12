@@ -11,6 +11,8 @@ import 'models.dart';
 import 'dart:math' as math;
 import 'quest_history_screen.dart';
 import 'package:share_plus/share_plus.dart';
+import 'reward_shop_screen.dart';
+import 'content_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -1068,18 +1070,114 @@ Offset _entrancePosition = const Offset(0.5, 0.8); // в долях от раз�
   List<BannerAd> _banners = [];
   Map<String, Shop> _shopById = {};
 
-  @override
-  void initState() {
-    super.initState();
-    FirebaseFunctions functions = FirebaseFunctions.instance;
-    functions.useFunctionsEmulator('localhost', 5001);
+ @override
+void initState() {
+  super.initState();
+  FirebaseFunctions functions = FirebaseFunctions.instance;
+  functions.useFunctionsEmulator('localhost', 5001);
 
-    _userId = FirebaseAuth.instance.currentUser!.uid;
-    _loadAll();
-    FirebaseFirestore.instance.collection('user_progress').doc(_userId).update({
-  'lastActive': FieldValue.serverTimestamp(),
-});
+  _userId = FirebaseAuth.instance.currentUser!.uid;
+  _loadAll();
+  FirebaseFirestore.instance.collection('user_progress').doc(_userId).update({
+    'lastActive': FieldValue.serverTimestamp(),
+  });
+
+  // Загружаем контент CMS (правила, приветствие и т.д.)
+  ContentService.preload(['home_welcome', 'quest_rules']);
+}
+  Future<void> _ensureDailyTasks() async {
+  final doc = await _firestore.collection('user_progress').doc(_userId).get();
+  final data = doc.data() ?? {};
+  final lastGenerated = (data['dailyTasksGeneratedAt'] as Timestamp?)?.toDate();
+  final now = DateTime.now();
+
+  // Генерируем, если ещё не сгенерированы сегодня
+  if (lastGenerated == null || lastGenerated.day != now.day || lastGenerated.month != now.month || lastGenerated.year != now.year) {
+    final tasks = _generateDailyTasks();
+    await _firestore.collection('user_progress').doc(_userId).update({
+      'dailyTasks': tasks,
+      'dailyTasksGeneratedAt': Timestamp.fromDate(now),
+    });
   }
+}
+
+List<Map<String, dynamic>> _generateDailyTasks() {
+  final categories = _allShops.map((s) => s.category).where((c) => c.isNotEmpty).toSet().toList();
+  final randomCategory = categories.isNotEmpty ? categories[math.Random().nextInt(categories.length)] : 'cafe';
+
+  return [
+    {
+      'id': 'task_1',
+      'type': 'complete_quest',
+      'description': 'Завершите один квест',
+      'reward': 50,
+      'progress': 0,
+      'target': 1,
+      'completed': false,
+    },
+    {
+      'id': 'task_2',
+      'type': 'visit_category',
+      'category': randomCategory,
+      'description': 'Посетите магазин категории "$randomCategory"',
+      'reward': 30,
+      'progress': 0,
+      'target': 1,
+      'completed': false,
+    },
+    {
+      'id': 'task_3',
+      'type': 'invite_friend',
+      'description': 'Пригласите друга (поделитесь кодом)',
+      'reward': 20,
+      'progress': 0,
+      'target': 1,
+      'completed': false,
+    },
+  ];
+}
+
+Future<void> _updateTaskProgress(String type, {String? category}) async {
+  final doc = await _firestore.collection('user_progress').doc(_userId).get();
+  final data = doc.data() ?? {};
+  final tasks = List<Map<String, dynamic>>.from(data['dailyTasks'] ?? []);
+  bool changed = false;
+
+  for (int i = 0; i < tasks.length; i++) {
+    final task = Map<String, dynamic>.from(tasks[i]);
+    if (task['completed'] == true) continue;
+
+    if (task['type'] == type) {
+      // Для категорий проверяем совпадение
+      if (type == 'visit_category' && category != null && task['category'] != category) continue;
+
+      final newProgress = (task['progress'] as int) + 1;
+      task['progress'] = newProgress;
+      if (newProgress >= (task['target'] as int)) {
+        task['completed'] = true;
+        final reward = task['reward'] as int;
+        await _firestore.collection('user_progress').doc(_userId).update({
+          'coins': FieldValue.increment(reward),
+          'dailyTasks': tasks,
+        });
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Задание выполнено! +$reward монет')),
+          );
+        }
+        changed = true;
+        break;
+      }
+      tasks[i] = task;
+      changed = true;
+      break;
+    }
+  }
+
+  if (changed) {
+    await _firestore.collection('user_progress').doc(_userId).update({'dailyTasks': tasks});
+  }
+}
 
   Future<void> _loadAll() async {
     await _loadUserLocation();
@@ -1982,7 +2080,7 @@ Future<void> _loadBanners() async {
       'step': currentStep,
       'timestamp': FieldValue.serverTimestamp(),
     });
-
+    await _updateTaskProgress('visit_category', category: shop.category);
     await _checkBonuses('step_completed', currentShop: shop);
 
     if (_completedSteps == _totalSteps) {
@@ -2042,66 +2140,90 @@ Future<void> _loadBanners() async {
       _lastShop = null;
       _lastShopId = null;
     });
-
+await _updateTaskProgress('complete_quest');
     if (!mounted) return;
     await _checkBonuses('cycle_completed');
   }
 
   Future<void> _showQRDialog(Shop shop) async {
-    final userDoc = await _firestore.collection('user_progress').doc(_userId).get();
-    final subscribedShops = List<String>.from(userDoc.data()?['subscribedShops'] ?? []);
-    final isSubscribed = subscribedShops.contains(shop.id);
+  final userDoc = await _firestore.collection('user_progress').doc(_userId).get();
+  final subscribedShops = List<String>.from(userDoc.data()?['subscribedShops'] ?? []);
+  final isSubscribed = subscribedShops.contains(shop.id);
+  final String discountText = shop.shortDiscount.isNotEmpty ? shop.shortDiscount : shop.discount;
 
-    final String discountText = shop.shortDiscount.isNotEmpty ? shop.shortDiscount : shop.discount;
+  // Генерируем уникальный токен
+  final token = DateTime.now().millisecondsSinceEpoch.toRadixString(36) +
+      _userId.substring(0, 4);
+  final qrDoc = {
+    'token': token,
+    'shopId': shop.id,
+    'userId': _userId,
+    'createdAt': FieldValue.serverTimestamp(),
+    'status': 'pending',
+  };
+  await _firestore.collection('qr_tokens').add(qrDoc);
 
-    await showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => AlertDialog(
-        title: Text(shop.name),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(Icons.qr_code_scanner_rounded, size: 120, color: Color(0xFF6C63FF)),
-            const SizedBox(height: 16),
-            Text(discountText, style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 16),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(isSubscribed ? Icons.notifications_active : Icons.notifications_off, color: Colors.grey),
-                const SizedBox(width: 8),
-                TextButton(
-                  onPressed: () async {
-                    List<String> newSubscribed;
-                    if (isSubscribed) {
-                      newSubscribed = subscribedShops.where((id) => id != shop.id).toList();
-                    } else {
-                      newSubscribed = [...subscribedShops, shop.id];
-                    }
-                    await _firestore.collection('user_progress').doc(_userId).update({
-                      'subscribedShops': newSubscribed,
-                    });
-                    if (mounted) Navigator.pop(context);
-                    _showQRDialog(shop);
-                  },
-                  style: TextButton.styleFrom(foregroundColor: Colors.black87),
-                  child: Text(isSubscribed ? 'Отписаться от уведомлений' : 'Подписаться на акции'),
-                ),
-              ],
+  // Строим QR-код, содержащий токен (показываем токен текстом)
+  await showDialog(
+    context: context,
+    barrierDismissible: false,
+    builder: (context) => AlertDialog(
+      title: Text(shop.name),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // Здесь можно вставить настоящий QR-код (пакет qr_flutter),
+          // но пока отобразим токен крупным шрифтом
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              border: Border.all(color: Colors.grey),
+              borderRadius: BorderRadius.circular(12),
             ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            style: TextButton.styleFrom(foregroundColor: Colors.black87),
-            child: const Text('Закрыть'),
+            child: Text(
+              token,
+              style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold, letterSpacing: 2),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(discountText, style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
+          const SizedBox(height: 16),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(isSubscribed ? Icons.notifications_active : Icons.notifications_off, color: Colors.grey),
+              const SizedBox(width: 8),
+              TextButton(
+                onPressed: () async {
+                  List<String> newSubscribed;
+                  if (isSubscribed) {
+                    newSubscribed = subscribedShops.where((id) => id != shop.id).toList();
+                  } else {
+                    newSubscribed = [...subscribedShops, shop.id];
+                  }
+                  await _firestore.collection('user_progress').doc(_userId).update({
+                    'subscribedShops': newSubscribed,
+                  });
+                  if (mounted) Navigator.pop(context);
+                  _showQRDialog(shop);
+                },
+                style: TextButton.styleFrom(foregroundColor: Colors.black87),
+                child: Text(isSubscribed ? 'Отписаться от уведомлений' : 'Подписаться на акции'),
+              ),
+            ],
           ),
         ],
       ),
-    );
-  }
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          style: TextButton.styleFrom(foregroundColor: Colors.black87),
+          child: const Text('Закрыть'),
+        ),
+      ],
+    ),
+  );
+}
 
   Future<void> _showFirstChoice() async {
     if (_allShops.isEmpty) return;
@@ -2870,6 +2992,69 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 ],
               ),
             ),
+          ),
+                    // Карточка монет и ежедневных заданий
+          FutureBuilder<DocumentSnapshot>(
+            future: _firestore.collection('user_progress').doc(_userId).get(),
+            builder: (context, snapshot) {
+              if (!snapshot.hasData) return const SizedBox.shrink();
+              final data = snapshot.data!.data() as Map<String, dynamic>? ?? {};
+              final coins = data['coins'] as int? ?? 0;
+              final tasks = List<Map<String, dynamic>>.from(data['dailyTasks'] ?? []);
+
+              return Card(
+                margin: const EdgeInsets.all(16),
+                color: Colors.white.withOpacity(0.9),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          const Icon(Icons.monetization_on, color: Colors.amber, size: 28),
+                          const SizedBox(width: 8),
+                          Text('$coins монет', style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+                          const Spacer(),
+                          ElevatedButton(
+  onPressed: () {
+    Navigator.push(context, MaterialPageRoute(builder: (_) => const RewardShopScreen()));
+  },
+  style: ElevatedButton.styleFrom(
+    backgroundColor: const Color(0xFF6C63FF),
+    foregroundColor: Colors.white,
+    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+  ),
+  child: const Text('Магазин наград'),
+),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      const Text('Ежедневные задания', style: TextStyle(fontWeight: FontWeight.bold)),
+                      const SizedBox(height: 8),
+                      ...tasks.map((task) => Padding(
+                        padding: const EdgeInsets.only(bottom: 8),
+                        child: Row(
+                          children: [
+                            Icon(
+                              task['completed'] == true ? Icons.check_circle : Icons.circle_outlined,
+                              color: task['completed'] == true ? Colors.green : Colors.grey,
+                              size: 20,
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(child: Text(task['description'] ?? '')),
+                            Text('+${task['reward'] ?? 0}', style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.amber)),
+                            const SizedBox(width: 8),
+                            Text('${task['progress'] ?? 0}/${task['target'] ?? 1}', style: const TextStyle(color: Colors.grey)),
+                          ],
+                        ),
+                      )),
+                    ],
+                  ),
+                ),
+              );
+            },
           ),
           const SizedBox(height: 20),
           const Padding(
