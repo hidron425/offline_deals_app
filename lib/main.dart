@@ -1066,6 +1066,7 @@ Offset _entrancePosition = const Offset(0.5, 0.8); // в долях от раз�
 
   Shop? _lastShop;
   String? _lastShopId;
+  Shop? _pendingQRShop;
 
   List<BannerAd> _banners = [];
   Map<String, Shop> _shopById = {};
@@ -2062,33 +2063,51 @@ Future<void> _loadBanners() async {
   }
 
   Future<void> _activateShop(Shop shop) async {
-    if (_usedShopIds.contains(shop.id)) return;
-    final currentStep = _completedSteps + 1;
-    setState(() {
-      _usedShopIds.add(shop.id);
-      if (_completedSteps < _totalSteps) _completedSteps++;
-      _pendingForkShops = null;
-      _isPathActive = _completedSteps > 0 && _completedSteps < _totalSteps;
-      _lastShop = shop;
-      _lastShopId = shop.id;
-    });
-    await _saveProgress();
-    await _showQRDialog(shop);
-    await _firestore.collection('sales').add({
-      'shopId': shop.id,
-      'userId': _userId,
-      'step': currentStep,
-      'timestamp': FieldValue.serverTimestamp(),
-    });
-    await _updateTaskProgress('visit_category', category: shop.category);
-    await _checkBonuses('step_completed', currentShop: shop);
+  if (_usedShopIds.contains(shop.id)) return;
 
-    if (_completedSteps == _totalSteps) {
-      _startNewCycle();
-    } else {
-      await _showForkDialog(shop);
-    }
+  // Показываем QR и ждём подтверждения
+  final confirmed = await _showQRDialog(shop);
+
+  if (confirmed == true) {
+    // Подтверждено — завершаем активацию (обновляем прогресс и продолжаем путь)
+    await _completeShopActivation(shop);
+  } else {
+    // Закрыто без подтверждения — сохраняем как ожидающий QR
+    setState(() {
+      _pendingQRShop = shop;
+    });
+    // Никаких изменений в прогрессе не делаем
   }
+}
+
+  Future<void> _completeShopActivation(Shop shop) async {
+  final currentStep = _completedSteps + 1;
+  setState(() {
+    _usedShopIds.add(shop.id);
+    if (_completedSteps < _totalSteps) _completedSteps++;
+    _pendingForkShops = null;
+    _isPathActive = _completedSteps > 0 && _completedSteps < _totalSteps;
+    _lastShop = shop;
+    _lastShopId = shop.id;
+    _pendingQRShop = null; // очищаем, так как QR использован
+  });
+  await _saveProgress();
+
+  await _firestore.collection('sales').add({
+    'shopId': shop.id,
+    'userId': _userId,
+    'step': currentStep,
+    'timestamp': FieldValue.serverTimestamp(),
+  });
+  await _updateTaskProgress('visit_category', category: shop.category);
+  await _checkBonuses('step_completed', currentShop: shop);
+
+  if (_completedSteps == _totalSteps) {
+    await _startNewCycle();
+  } else {
+    await _showForkDialog(shop);
+  }
+}
 
   Future<void> _startNewCycle() async {
     final newCycleCount = _cycleCount + 1;
@@ -2145,26 +2164,14 @@ await _updateTaskProgress('complete_quest');
     await _checkBonuses('cycle_completed');
   }
 
-  Future<void> _showQRDialog(Shop shop) async {
+  Future<bool?> _showQRDialog(Shop shop) async {
   final userDoc = await _firestore.collection('user_progress').doc(_userId).get();
   final subscribedShops = List<String>.from(userDoc.data()?['subscribedShops'] ?? []);
   final isSubscribed = subscribedShops.contains(shop.id);
   final String discountText = shop.shortDiscount.isNotEmpty ? shop.shortDiscount : shop.discount;
 
-  // Генерируем уникальный токен
-  final token = DateTime.now().millisecondsSinceEpoch.toRadixString(36) +
-      _userId.substring(0, 4);
-  final qrDoc = {
-    'token': token,
-    'shopId': shop.id,
-    'userId': _userId,
-    'createdAt': FieldValue.serverTimestamp(),
-    'status': 'pending',
-  };
-  await _firestore.collection('qr_tokens').add(qrDoc);
-
-  // Строим QR-код, содержащий токен (показываем токен текстом)
-  await showDialog(
+  // Кнопка для тестирования (пока всегда true)
+  final bool? result = await showDialog<bool>(
     context: context,
     barrierDismissible: false,
     builder: (context) => AlertDialog(
@@ -2172,20 +2179,8 @@ await _updateTaskProgress('complete_quest');
       content: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          // Здесь можно вставить настоящий QR-код (пакет qr_flutter),
-          // но пока отобразим токен крупным шрифтом
-          Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              border: Border.all(color: Colors.grey),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Text(
-              token,
-              style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold, letterSpacing: 2),
-            ),
-          ),
-          const SizedBox(height: 8),
+          const Icon(Icons.qr_code_scanner_rounded, size: 120, color: Color(0xFF6C63FF)),
+          const SizedBox(height: 16),
           Text(discountText, style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
           const SizedBox(height: 16),
           Row(
@@ -2212,17 +2207,29 @@ await _updateTaskProgress('complete_quest');
               ),
             ],
           ),
+          const SizedBox(height: 16),
+          // 🆕 Тестовая кнопка "Использовать промокод"
+          ElevatedButton.icon(
+            onPressed: () => Navigator.pop(context, true),
+            icon: const Icon(Icons.check),
+            label: const Text('Я использовал промокод'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.green,
+              foregroundColor: Colors.white,
+            ),
+          ),
         ],
       ),
       actions: [
         TextButton(
-          onPressed: () => Navigator.pop(context),
+          onPressed: () => Navigator.pop(context, false),
           style: TextButton.styleFrom(foregroundColor: Colors.black87),
           child: const Text('Закрыть'),
         ),
       ],
     ),
   );
+  return result;
 }
 
   Future<void> _showFirstChoice() async {
@@ -2232,6 +2239,7 @@ await _updateTaskProgress('complete_quest');
     available.shuffle();
     final first = available.take(2).toList();
     if (first.isEmpty) return;
+    final rules = await ContentService.getContent('quest_rules', defaultValue: 'Пройдите 5 магазинов и получите скидки!');
     await showDialog(
       context: context,
       barrierDismissible: false,
@@ -2240,6 +2248,8 @@ await _updateTaskProgress('complete_quest');
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
+            Text(rules),
+            const SizedBox(height: 16),
             const Text('Выбери магазин, с которого начнёшь:'),
             const SizedBox(height: 16),
             Row(
@@ -2270,6 +2280,14 @@ await _updateTaskProgress('complete_quest');
   }
 
   Future<void> _resumePath() async {
+    if (_pendingQRShop != null) {
+  // Есть ожидающий QR – предложить показать его снова
+  final confirmed = await _showQRDialog(_pendingQRShop!);
+  if (confirmed == true) {
+    await _completeShopActivation(_pendingQRShop!);
+  }
+  return;
+}
     if (_completedSteps == 0) {
       _showFirstChoice();
       return;
@@ -2322,7 +2340,47 @@ await _updateTaskProgress('complete_quest');
     }
   }
 
+Widget _buildPendingQRView() {
+  final shop = _pendingQRShop!;
+  return Center(
+    child: Padding(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          const Icon(Icons.qr_code, size: 64, color: Color(0xFF6C63FF)),
+          const SizedBox(height: 16),
+          Text('Ожидает QR: ${shop.name}',
+              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+          const SizedBox(height: 8),
+          const Text('Покажите QR продавцу, затем подтвердите использование',
+              textAlign: TextAlign.center),
+          const SizedBox(height: 24),
+          ElevatedButton.icon(
+            onPressed: () async {
+              final confirmed = await _showQRDialog(shop);
+              if (confirmed == true) {
+                await _completeShopActivation(shop);
+              }
+            },
+            icon: const Icon(Icons.qr_code_scanner),
+            label: const Text('Показать QR снова'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF6C63FF),
+              foregroundColor: Colors.white,
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
   Widget _buildMainContent() {
+    // 🆕 Если есть ожидающий QR – показываем только карточку ожидания
+  if (_pendingQRShop != null) {
+    return _buildPendingQRView();
+  }
     if (_pendingForkShops != null && _pendingForkShops!.length == 2) {
       return SingleChildScrollView(
         child: Column(
@@ -2401,7 +2459,28 @@ await _updateTaskProgress('complete_quest');
         ),
       );
     }
-
+if (_pendingQRShop != null) {
+  return Column(
+    children: [
+      Card(
+        margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        child: ListTile(
+          leading: const Icon(Icons.qr_code, color: Color(0xFF6C63FF)),
+          title: Text('Ожидает QR: ${_pendingQRShop!.name}'),
+          subtitle: const Text('Нажмите, чтобы показать QR снова'),
+          onTap: () async {
+            final confirmed = await _showQRDialog(_pendingQRShop!);
+            if (confirmed == true) {
+              await _completeShopActivation(_pendingQRShop!);
+            }
+          },
+        ),
+      ),
+      const SizedBox(height: 16),
+      _buildShopIconsGrid(), // но лучше вернуть сетку ниже
+    ],
+  );
+}
     return _buildShopIconsGrid();
   }
 
@@ -2520,6 +2599,21 @@ Widget build(BuildContext context) {
                   ),
               ],
             ),
+          ),
+          // Приветственный текст из CMS
+          FutureBuilder<String>(
+            future: ContentService.getContent('home_welcome', defaultValue: 'Добро пожаловать в квест!'),
+            builder: (context, snapshot) {
+              if (!snapshot.hasData) return const SizedBox.shrink();
+              return Padding(
+                padding: const EdgeInsets.all(16),
+                child: Text(
+                  snapshot.data!,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(fontSize: 16, color: Colors.white),
+                ),
+              );
+            },
           ),
           // Баннер (можно добавить отступы при необходимости)
           BannersCarousel(
@@ -3110,6 +3204,29 @@ class _ProfileScreenState extends State<ProfileScreen> {
             ),
           ),
           const SizedBox(height: 20),
+                    // FAQ из CMS
+          FutureBuilder<String>(
+            future: ContentService.getContent('faq', defaultValue: 'Здесь скоро появятся часто задаваемые вопросы.'),
+            builder: (context, snapshot) {
+              if (!snapshot.hasData) return const SizedBox.shrink();
+              return Card(
+                margin: const EdgeInsets.all(16),
+                color: Colors.white.withOpacity(0.9),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text('❓ FAQ', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+                      const SizedBox(height: 8),
+                      Text(snapshot.data!),
+                    ],
+                  ),
+                ),
+              );
+            },
+          ),
         ],
       ),
     );
