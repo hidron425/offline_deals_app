@@ -12,26 +12,29 @@ class RewardShopScreen extends StatefulWidget {
 class _RewardShopScreenState extends State<RewardShopScreen> {
   final _firestore = FirebaseFirestore.instance;
   late final String _userId;
+  int _cycleCount = 0;
 
-  // Примеры эксклюзивных наград
   final List<Map<String, dynamic>> _rewards = [
     {
       'title': 'Скидка 15% на любую покупку',
       'cost': 100,
       'icon': '🏷️',
       'id': 'reward_1',
+      'requiredLevel': 0,
     },
     {
       'title': 'Бесплатный напиток в кафе',
       'cost': 80,
       'icon': '☕',
       'id': 'reward_2',
+      'requiredLevel': 1,
     },
     {
       'title': 'Дополнительный бонусный квест',
       'cost': 200,
       'icon': '🎁',
       'id': 'reward_3',
+      'requiredLevel': 2,
     },
   ];
 
@@ -39,6 +42,14 @@ class _RewardShopScreenState extends State<RewardShopScreen> {
   void initState() {
     super.initState();
     _userId = FirebaseAuth.instance.currentUser!.uid;
+    _loadCycleCount();
+  }
+
+  Future<void> _loadCycleCount() async {
+    final doc = await _firestore.collection('user_progress').doc(_userId).get();
+    setState(() {
+      _cycleCount = (doc.data()?['cycleCount'] as num?)?.toInt() ?? 0;
+    });
   }
 
   Future<void> _purchaseReward(Map<String, dynamic> reward) async {
@@ -48,7 +59,9 @@ class _RewardShopScreenState extends State<RewardShopScreen> {
     final cost = reward['cost'] as int;
 
     if (coins < cost) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Недостаточно монет')));
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Недостаточно монет')));
+      }
       return;
     }
 
@@ -68,7 +81,6 @@ class _RewardShopScreenState extends State<RewardShopScreen> {
     await _firestore.collection('user_progress').doc(_userId).update({
       'coins': FieldValue.increment(-cost),
       'purchasedRewards': FieldValue.arrayUnion([reward['id']]),
-      // Добавляем бонус в pendingBonuses
       'pendingBonuses': FieldValue.arrayUnion([{
         'title': reward['title'],
         'message': 'Вы обменяли монеты на награду!',
@@ -78,19 +90,21 @@ class _RewardShopScreenState extends State<RewardShopScreen> {
 
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Награда "${reward['title']}" получена!')));
-      Navigator.pop(context); // вернуться в профиль
+      Navigator.pop(context);
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    final availableRewards = _rewards.where((r) => _cycleCount >= (r['requiredLevel'] as int)).toList();
+
     return Scaffold(
       appBar: AppBar(title: const Text('Магазин наград')),
       body: ListView.builder(
         padding: const EdgeInsets.all(16),
-        itemCount: _rewards.length,
+        itemCount: availableRewards.length,
         itemBuilder: (context, index) {
-          final reward = _rewards[index];
+          final reward = availableRewards[index];
           return Card(
             child: ListTile(
               leading: Text(reward['icon'], style: const TextStyle(fontSize: 32)),

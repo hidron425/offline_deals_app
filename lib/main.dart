@@ -13,6 +13,7 @@ import 'quest_history_screen.dart';
 import 'package:share_plus/share_plus.dart';
 import 'reward_shop_screen.dart';
 import 'content_service.dart';
+import 'level_system.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -588,12 +589,16 @@ class _ShopCard extends StatefulWidget {
   final Function(Shop) onTap;
   final VoidCallback? onInfoTap;
   final ValueChanged<String?> onHover;
+  final bool isFavorite;                     // 🆕
+  final VoidCallback? onToggleFavorite;      // 🆕
 
   const _ShopCard({
     required this.shop,
     required this.onTap,
     this.onInfoTap,
     required this.onHover,
+    this.isFavorite = false,                 // 🆕
+    this.onToggleFavorite,                   // 🆕
   });
 
   @override
@@ -603,6 +608,7 @@ class _ShopCard extends StatefulWidget {
 class _ShopCardState extends State<_ShopCard> {
   bool _isHovered = false;
   bool _infoHovered = false;
+  bool _favHovered = false;                  // 🆕
 
   @override
   Widget build(BuildContext context) {
@@ -656,7 +662,7 @@ class _ShopCardState extends State<_ShopCard> {
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  // Изображение с иконкой информации
+                  // Изображение с иконками (сердечко и информация)
                   Stack(
                     children: [
                       if (widget.shop.imageUrl.isNotEmpty)
@@ -682,32 +688,60 @@ class _ShopCardState extends State<_ShopCard> {
                           color: Colors.grey[300],
                           child: Center(child: Text(widget.shop.icon, style: const TextStyle(fontSize: 48))),
                         ),
-                      // Иконка информации
-                      if (widget.onInfoTap != null)
-                        Positioned(
-                          top: 4,
-                          right: 4,
-                          child: MouseRegion(
-                            onEnter: (_) => setState(() => _infoHovered = true),
-                            onExit: (_) => setState(() => _infoHovered = false),
-                            child: GestureDetector(
-                              onTap: widget.onInfoTap,
-                              child: AnimatedContainer(
-                                duration: const Duration(milliseconds: 200),
-                                padding: const EdgeInsets.all(4),
-                                decoration: BoxDecoration(
-                                  color: _infoHovered ? Colors.black87 : Colors.black54,
-                                  shape: BoxShape.circle,
-                                ),
-                                child: Icon(
-                                  Icons.info_outline,
-                                  size: _infoHovered ? 14 : 12,
-                                  color: Colors.white,
+                      // Иконки избранного и информации
+                      Positioned(
+                        top: 4,
+                        right: 4,
+                        child: Row(
+                          children: [
+                            // Кнопка избранного
+                            if (widget.onToggleFavorite != null)
+                              MouseRegion(
+                                onEnter: (_) => setState(() => _favHovered = true),
+                                onExit: (_) => setState(() => _favHovered = false),
+                                child: GestureDetector(
+                                  onTap: widget.onToggleFavorite,
+                                  child: AnimatedContainer(
+                                    duration: const Duration(milliseconds: 200),
+                                    padding: const EdgeInsets.all(4),
+                                    decoration: BoxDecoration(
+                                      color: _favHovered ? Colors.black87 : Colors.black54,
+                                      shape: BoxShape.circle,
+                                    ),
+                                    child: Icon(
+                                      widget.isFavorite ? Icons.favorite : Icons.favorite_border,
+                                      size: 14,
+                                      color: widget.isFavorite ? Colors.red : Colors.white,
+                                    ),
+                                  ),
                                 ),
                               ),
-                            ),
-                          ),
+                            if (widget.onToggleFavorite != null) const SizedBox(width: 4),
+                            // Кнопка информации
+                            if (widget.onInfoTap != null)
+                              MouseRegion(
+                                onEnter: (_) => setState(() => _infoHovered = true),
+                                onExit: (_) => setState(() => _infoHovered = false),
+                                child: GestureDetector(
+                                  onTap: widget.onInfoTap,
+                                  child: AnimatedContainer(
+                                    duration: const Duration(milliseconds: 200),
+                                    padding: const EdgeInsets.all(4),
+                                    decoration: BoxDecoration(
+                                      color: _infoHovered ? Colors.black87 : Colors.black54,
+                                      shape: BoxShape.circle,
+                                    ),
+                                    child: Icon(
+                                      Icons.info_outline,
+                                      size: _infoHovered ? 14 : 12,
+                                      color: Colors.white,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                          ],
                         ),
+                      ),
                     ],
                   ),
                   // Нижняя плашка (полупрозрачная)
@@ -764,12 +798,16 @@ class _PendingShopButton extends StatefulWidget {
   final Function(Shop) onTap;
   final VoidCallback? onInfoTap;
   final ValueChanged<String?> onHover;
+  final bool isFavorite;                     // 🆕
+  final VoidCallback? onToggleFavorite;      // 🆕
 
   const _PendingShopButton({
     required this.shop,
     required this.onTap,
     this.onInfoTap,
     required this.onHover,
+    this.isFavorite = false,                 // 🆕
+    this.onToggleFavorite,                   // 🆕
   });
 
   @override
@@ -779,6 +817,7 @@ class _PendingShopButton extends StatefulWidget {
 class _PendingShopButtonState extends State<_PendingShopButton> {
   bool _isHovered = false;
   bool _infoHovered = false;
+  bool _favHovered = false;                  // 🆕
 
   @override
   Widget build(BuildContext context) {
@@ -832,29 +871,87 @@ class _PendingShopButtonState extends State<_PendingShopButton> {
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  if (widget.shop.imageUrl.isNotEmpty)
-                    ClipRect(
-                      child: Transform(
-                        transform: transformMatrix,
-                        child: Image.network(
-                          widget.shop.imageUrl,
-                          width: double.infinity,
-                          height: 100,
-                          fit: BoxFit.cover,
-                          errorBuilder: (context, error, stackTrace) => Container(
-                            height: 100,
-                            color: Colors.grey[300],
-                            child: Center(child: Text(widget.shop.icon, style: const TextStyle(fontSize: 48))),
+                  // Изображение с иконками (сердечко и информация)
+                  Stack(
+                    children: [
+                      if (widget.shop.imageUrl.isNotEmpty)
+                        ClipRect(
+                          child: Transform(
+                            transform: transformMatrix,
+                            child: Image.network(
+                              widget.shop.imageUrl,
+                              width: double.infinity,
+                              height: 100,
+                              fit: BoxFit.cover,
+                              errorBuilder: (context, error, stackTrace) => Container(
+                                height: 100,
+                                color: Colors.grey[300],
+                                child: Center(child: Text(widget.shop.icon, style: const TextStyle(fontSize: 48))),
+                              ),
+                            ),
                           ),
+                        )
+                      else
+                        Container(
+                          height: 100,
+                          color: Colors.grey[300],
+                          child: Center(child: Text(widget.shop.icon, style: const TextStyle(fontSize: 48))),
+                        ),
+                      // Иконки избранного и информации
+                      Positioned(
+                        top: 4,
+                        right: 4,
+                        child: Row(
+                          children: [
+                            if (widget.onToggleFavorite != null)
+                              MouseRegion(
+                                onEnter: (_) => setState(() => _favHovered = true),
+                                onExit: (_) => setState(() => _favHovered = false),
+                                child: GestureDetector(
+                                  onTap: widget.onToggleFavorite,
+                                  child: AnimatedContainer(
+                                    duration: const Duration(milliseconds: 200),
+                                    padding: const EdgeInsets.all(4),
+                                    decoration: BoxDecoration(
+                                      color: _favHovered ? Colors.black87 : Colors.black54,
+                                      shape: BoxShape.circle,
+                                    ),
+                                    child: Icon(
+                                      widget.isFavorite ? Icons.favorite : Icons.favorite_border,
+                                      size: 14,
+                                      color: widget.isFavorite ? Colors.red : Colors.white,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            if (widget.onToggleFavorite != null) const SizedBox(width: 4),
+                            if (widget.onInfoTap != null)
+                              MouseRegion(
+                                onEnter: (_) => setState(() => _infoHovered = true),
+                                onExit: (_) => setState(() => _infoHovered = false),
+                                child: GestureDetector(
+                                  onTap: widget.onInfoTap,
+                                  child: AnimatedContainer(
+                                    duration: const Duration(milliseconds: 200),
+                                    padding: const EdgeInsets.all(4),
+                                    decoration: BoxDecoration(
+                                      color: _infoHovered ? Colors.black87 : Colors.black54,
+                                      shape: BoxShape.circle,
+                                    ),
+                                    child: Icon(
+                                      Icons.info_outline,
+                                      size: _infoHovered ? 14 : 12,
+                                      color: Colors.white,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                          ],
                         ),
                       ),
-                    )
-                  else
-                    Container(
-                      height: 100,
-                      color: Colors.grey[300],
-                      child: Center(child: Text(widget.shop.icon, style: const TextStyle(fontSize: 48))),
-                    ),
+                    ],
+                  ),
+                  // Нижняя плашка с названием и скидкой
                   Container(
                     padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 6),
                     decoration: BoxDecoration(
@@ -1052,6 +1149,8 @@ Offset _entrancePosition = const Offset(0.5, 0.8); // в долях от раз�
   int _completedSteps = 0;
   final int _totalSteps = 5;
   final Set<String> _usedShopIds = {};
+  Set<String> _favoriteShops = {};
+  bool _allShopsBonusClaimed = false;
   late final String _userId;
   int _cycleCount = 0;
 
@@ -1185,6 +1284,7 @@ Future<void> _updateTaskProgress(String type, {String? category}) async {
     await _loadShops();
     await _loadBanners();
     await _loadProgress();
+    await _ensureDailyTasks();  // 🆕
     setState(() => _isLoading = false);
     if (_selectedMallId == null) _showLocationPicker();
   }
@@ -1233,6 +1333,9 @@ Future<void> _loadBanners() async {
     final doc = await _firestore.collection('user_progress').doc(_userId).get();
     if (doc.exists) {
       final data = doc.data()!;
+      final favList = List<String>.from(data['favoriteShops'] ?? []);
+      _allShopsBonusClaimed = data['allShopsBonusClaimed'] == true;
+     _favoriteShops = favList.toSet();
       final pendingIds = List<String>.from(data['pendingForkShops'] ?? []);
       List<Shop>? pendingShops;
       if (pendingIds.length == 2 && _allShops.isNotEmpty) {
@@ -1280,6 +1383,8 @@ Future<void> _loadBanners() async {
         'cycleCount': 0,
         'lastShopId': null,
         'isPathActive': false,
+        'favoriteShops': [],
+        'allShopsBonusClaimed': false,
       });
     }
   }
@@ -1526,7 +1631,6 @@ Future<void> _loadBanners() async {
 
   // ----- МИНИ-КАРТА НА ГЛАВНОМ ЭКРАНЕ (С ПОДСВЕТКОЙ) -----
  Widget _buildEnhancedMap() {
-  // Уникальные категории для фильтра
   final categories = _allShops
       .map((s) => s.category)
       .where((c) => c.isNotEmpty)
@@ -1534,7 +1638,6 @@ Future<void> _loadBanners() async {
       .toList()
     ..sort();
 
-  // Фильтрованные магазины
   List<Shop> visibleShops = _allShops.where((s) {
     if (_searchQuery.isNotEmpty) {
       return s.name.toLowerCase().contains(_searchQuery.toLowerCase());
@@ -1578,7 +1681,6 @@ Future<void> _loadBanners() async {
               ),
             ),
             const SizedBox(width: 8),
-            // Фильтр по категории
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 12),
               decoration: BoxDecoration(
@@ -1608,9 +1710,9 @@ Future<void> _loadBanners() async {
         ),
       ),
       const SizedBox(height: 8),
-      // Сама карта
+      // Карта
       SizedBox(
-        height: 300, // можно увеличить для маршрута
+        height: 300,
         child: LayoutBuilder(
           builder: (context, constraints) {
             const double imageWidth = 2045;
@@ -1625,14 +1727,12 @@ Future<void> _loadBanners() async {
 
             return Stack(
               children: [
-                // Фоновое изображение
                 Image.asset(
                   'assets/images/mall_map.png',
                   width: constraints.maxWidth,
                   height: constraints.maxHeight,
                   fit: BoxFit.contain,
                 ),
-                // Слой магазинов (иконки/подсветка)
                 ...visibleShops.where((s) => s.mapX != null && s.mapY != null).map((shop) {
                   final bool isHovered = _hoveredShopId == shop.id;
                   final bool isRouteTarget = (_selectedRouteShop?.id == shop.id);
@@ -1659,7 +1759,7 @@ Future<void> _loadBanners() async {
                       onTap: () {
                         setState(() {
                           _selectedRouteShop = shop;
-                          _hoveredShopId = shop.id; // показываем подсветку
+                          _hoveredShopId = shop.id;
                         });
                       },
                       child: MouseRegion(
@@ -1684,7 +1784,6 @@ Future<void> _loadBanners() async {
                     ),
                   );
                 }).toList(),
-                // Слой маршрута
                 if (_selectedRouteShop != null)
                   CustomPaint(
                     size: Size(constraints.maxWidth, constraints.maxHeight),
@@ -1711,26 +1810,13 @@ Future<void> _loadBanners() async {
           child: TextButton.icon(
             icon: const Icon(Icons.close, size: 16),
             label: Text('Сбросить маршрут до ${_selectedRouteShop!.name}'),
-            onPressed: () => setState(() => _selectedRouteShop = null),
-          ),
-        ),
-        // ... начало метода до карты ...
-
-      // Кнопка сброса маршрута
-      if (_selectedRouteShop != null)
-        Padding(
-          padding: const EdgeInsets.only(top: 4),
-          child: TextButton.icon(
-            icon: const Icon(Icons.close, size: 16),
-            label: Text('Сбросить маршрут до ${_selectedRouteShop!.name}'),
             onPressed: () => setState(() {
               _selectedRouteShop = null;
               _hoveredShopId = null;
             }),
           ),
         ),
-
-      // Информация о выбранном магазине и кнопка "В путь"
+      // Информация о выбранном магазине и кнопка «В путь»
       if (_selectedRouteShop != null)
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -1741,9 +1827,7 @@ Future<void> _loadBanners() async {
               title: Text(_selectedRouteShop!.name),
               subtitle: Text(_selectedRouteShop!.discount),
               trailing: ElevatedButton(
-                onPressed: () {
-                  _activateShop(_selectedRouteShop!);
-                },
+                onPressed: () => _activateShop(_selectedRouteShop!),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: const Color(0xFF6C63FF),
                   foregroundColor: Colors.white,
@@ -1862,22 +1946,26 @@ Future<void> _loadBanners() async {
   }
 
   List<Shop> _getNextTwoShops(Shop currentShop) {
-    var available = _allShops.where((s) => !_usedShopIds.contains(s.id) && s.id != currentShop.id).toList();
-    if (available.length < 2) return available;
-    final weighted = <Shop>[];
-    for (var shop in available) {
-      for (int i = 0; i < shop.priority; i++) weighted.add(shop);
+  var available = _allShops.where((s) => !_usedShopIds.contains(s.id) && s.id != currentShop.id).toList();
+  if (available.length < 2) return available;
+  final weighted = <Shop>[];
+  for (var shop in available) {
+    int weight = shop.priority;
+    if (_favoriteShops.contains(shop.id)) {
+      weight += 3; // повышаем приоритет для избранных
     }
-    weighted.shuffle();
-    final selected = <Shop>[];
-    for (var shop in weighted) {
-      if (!selected.contains(shop)) {
-        selected.add(shop);
-        if (selected.length == 2) break;
-      }
-    }
-    return selected;
+    for (int i = 0; i < weight; i++) weighted.add(shop);
   }
+  weighted.shuffle();
+  final selected = <Shop>[];
+  for (var shop in weighted) {
+    if (!selected.contains(shop)) {
+      selected.add(shop);
+      if (selected.length == 2) break;
+    }
+  }
+  return selected;
+}
 
   List<String> _getRelatedCategories(String cat) {
     switch (cat) {
@@ -2082,30 +2170,97 @@ Future<void> _loadBanners() async {
 
   Future<void> _completeShopActivation(Shop shop) async {
   final currentStep = _completedSteps + 1;
+
+  // Обновляем локальное состояние: добавляем магазин в использованные, увеличиваем шаг,
+  // очищаем pending-состояния и pending QR.
   setState(() {
     _usedShopIds.add(shop.id);
-    if (_completedSteps < _totalSteps) _completedSteps++;
+    if (_completedSteps < _totalSteps) {
+      _completedSteps++;
+    }
     _pendingForkShops = null;
     _isPathActive = _completedSteps > 0 && _completedSteps < _totalSteps;
     _lastShop = shop;
     _lastShopId = shop.id;
-    _pendingQRShop = null; // очищаем, так как QR использован
+    _pendingQRShop = null; // QR использован, больше не ожидается
   });
+
+  // Сохраняем прогресс в Firestore
   await _saveProgress();
 
+  // Записываем магазин в общий список посещённых (для ачивки "все магазины")
+  await _firestore.collection('user_progress').doc(_userId).update({
+    'allVisitedShopIds': FieldValue.arrayUnion([shop.id]),
+  });
+
+  // Фиксируем факт продажи/активации
   await _firestore.collection('sales').add({
     'shopId': shop.id,
     'userId': _userId,
     'step': currentStep,
     'timestamp': FieldValue.serverTimestamp(),
   });
+
+  // Обновляем прогресс ежедневного задания (посещение категории)
   await _updateTaskProgress('visit_category', category: shop.category);
+
+  // Проверяем универсальные бонусы за завершение шага
   await _checkBonuses('step_completed', currentShop: shop);
 
+  // Проверяем, не посещены ли все магазины ТЦ (бонус исследователя)
+  await _checkAllShopsBonus();
+
+  // Если квест завершён (достигли totalSteps), начинаем новый цикл,
+  // иначе показываем развилку для выбора следующего магазина.
   if (_completedSteps == _totalSteps) {
     await _startNewCycle();
   } else {
     await _showForkDialog(shop);
+  }
+}
+
+Future<void> _toggleFavorite(Shop shop) async {
+  setState(() {
+    if (_favoriteShops.contains(shop.id)) {
+      _favoriteShops.remove(shop.id);
+    } else {
+      _favoriteShops.add(shop.id);
+    }
+  });
+  await _firestore.collection('user_progress').doc(_userId).update({
+    'favoriteShops': _favoriteShops.toList(),
+  });
+}
+
+Future<void> _checkAllShopsBonus() async {
+  if (_allShopsBonusClaimed) return;
+
+  final doc = await _firestore.collection('user_progress').doc(_userId).get();
+  final data = doc.data() ?? {};
+  final visited = (data['allVisitedShopIds'] as List<dynamic>? ?? [])
+      .map((e) => e.toString())
+      .toSet();
+  final allShopIds = _allShops.map((s) => s.id).toSet();
+
+  if (allShopIds.isNotEmpty && visited.containsAll(allShopIds)) {
+    final bonus = {
+      'title': 'Исследователь ТЦ',
+      'message': 'Вы посетили все магазины этого ТЦ!',
+      'icon': '🌟',
+    };
+
+    await _firestore.collection('user_progress').doc(_userId).update({
+      'pendingBonuses': FieldValue.arrayUnion([bonus]),
+      'allShopsBonusClaimed': true,
+    });
+
+    setState(() => _allShopsBonusClaimed = true);
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Поздравляем! Вы посетили все магазины ТЦ!')),
+      );
+    }
   }
 }
 
@@ -2401,18 +2556,22 @@ Widget _buildPendingQRView() {
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 _PendingShopButton(
-                  shop: _pendingForkShops![0],
-                  onTap: _activateShop,
-                  onInfoTap: () => _showShopInfo(_pendingForkShops![0]),
-                  onHover: (id) => setState(() => _hoveredShopId = id),
-                ),
-                const SizedBox(width: 20),
-                _PendingShopButton(
-                  shop: _pendingForkShops![1],
-                  onTap: _activateShop,
-                  onInfoTap: () => _showShopInfo(_pendingForkShops![1]),
-                  onHover: (id) => setState(() => _hoveredShopId = id),
-                ),
+  shop: _pendingForkShops![0],
+  onTap: _activateShop,
+  onInfoTap: () => _showShopInfo(_pendingForkShops![0]),
+  onHover: (id) => setState(() => _hoveredShopId = id),
+  isFavorite: _favoriteShops.contains(_pendingForkShops![0].id),
+  onToggleFavorite: () => _toggleFavorite(_pendingForkShops![0]),
+),
+const SizedBox(width: 20),
+_PendingShopButton(
+  shop: _pendingForkShops![1],
+  onTap: _activateShop,
+  onInfoTap: () => _showShopInfo(_pendingForkShops![1]),
+  onHover: (id) => setState(() => _hoveredShopId = id),
+  isFavorite: _favoriteShops.contains(_pendingForkShops![1].id),
+  onToggleFavorite: () => _toggleFavorite(_pendingForkShops![1]),
+),
               ],
             ),
             const SizedBox(height: 32),
@@ -2459,28 +2618,7 @@ Widget _buildPendingQRView() {
         ),
       );
     }
-if (_pendingQRShop != null) {
-  return Column(
-    children: [
-      Card(
-        margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-        child: ListTile(
-          leading: const Icon(Icons.qr_code, color: Color(0xFF6C63FF)),
-          title: Text('Ожидает QR: ${_pendingQRShop!.name}'),
-          subtitle: const Text('Нажмите, чтобы показать QR снова'),
-          onTap: () async {
-            final confirmed = await _showQRDialog(_pendingQRShop!);
-            if (confirmed == true) {
-              await _completeShopActivation(_pendingQRShop!);
-            }
-          },
-        ),
-      ),
-      const SizedBox(height: 16),
-      _buildShopIconsGrid(), // но лучше вернуть сетку ниже
-    ],
-  );
-}
+
     return _buildShopIconsGrid();
   }
 
@@ -2505,11 +2643,13 @@ if (_pendingQRShop != null) {
             spacing: 16,
             runSpacing: 16,
             children: _allShops.map((shop) => _ShopCard(
-              shop: shop,
-              onTap: _activateShop,
-              onInfoTap: () => _showShopInfo(shop),
-              onHover: (id) => setState(() => _hoveredShopId = id),
-            )).toList(),
+  shop: shop,
+  onTap: _activateShop,
+  onInfoTap: () => _showShopInfo(shop),
+  onHover: (id) => setState(() => _hoveredShopId = id),
+  isFavorite: _favoriteShops.contains(shop.id),               // 🆕
+  onToggleFavorite: () => _toggleFavorite(shop),              // 🆕
+)).toList(),
           ),
           const SizedBox(height: 24),
           ElevatedButton(
@@ -2685,6 +2825,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
   final _firestore = FirebaseFirestore.instance;
   late final String _userId;
   int _pushIntervalHours = 1;
+  int _cycleCount = 0;
   List<String> _subscribedShops = [];
   Map<String, String> _shopNames = {};
 
@@ -2693,13 +2834,14 @@ class _ProfileScreenState extends State<ProfileScreen> {
   String? _referralStatus;
 
   @override
-  void initState() {
-    super.initState();
-    _userId = FirebaseAuth.instance.currentUser!.uid;
-    _loadPushSettings();
-    _loadSubscribedShops();
-    _ensureReferralCode();
-  }
+void initState() {
+  super.initState();
+  _userId = FirebaseAuth.instance.currentUser!.uid;
+  _loadPushSettings();
+  _loadSubscribedShops();
+  _ensureReferralCode();
+  _loadCycleCount(); // загружаем количество циклов для определения уровня
+}
 
   Future<void> _loadPushSettings() async {
     final doc = await _firestore.collection('user_progress').doc(_userId).get();
@@ -2836,6 +2978,29 @@ class _ProfileScreenState extends State<ProfileScreen> {
       return chars[charIndex];
     }).join();
   }
+
+  Future<void> _loadCycleCount() async {
+    final doc = await _firestore.collection('user_progress').doc(_userId).get();
+    if (doc.exists && mounted) {
+      setState(() {
+        _cycleCount = (doc.data()?['cycleCount'] as num?)?.toInt() ?? 0;
+      });
+    }
+  }
+
+double _getLevelProgress() {
+  if (_cycleCount >= 7) return 1.0;
+  if (_cycleCount >= 3) return (_cycleCount - 3) / 4; // от 3 до 7
+  return _cycleCount / 3; // от 0 до 3
+}
+
+String _getLevelProgressText() {
+  final currentLevel = LevelSystem.getCurrentLevel(_cycleCount);
+  if (currentLevel == 3) return 'Максимальный уровень достигнут';
+  final nextCycle = LevelSystem.getNextLevelCycles(_cycleCount);
+  final cyclesRemaining = nextCycle - _cycleCount;
+  return 'Осталось циклов до следующего уровня: $cyclesRemaining';
+}
 
   Future<void> _showEnterReferralDialog() async {
     final controller = TextEditingController();
@@ -3150,6 +3315,48 @@ class _ProfileScreenState extends State<ProfileScreen> {
               );
             },
           ),
+          // Уровень пользователя
+Card(
+  margin: const EdgeInsets.all(16),
+  color: Colors.white.withOpacity(0.9),
+  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+  child: Padding(
+    padding: const EdgeInsets.all(16),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            const Icon(Icons.star, color: Colors.amber, size: 28),
+            const SizedBox(width: 8),
+            Text(
+              LevelSystem.getLevelName(_cycleCount),
+              style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+            ),
+            const Spacer(),
+            if (LevelSystem.getNextLevelCycles(_cycleCount) > 0)
+              Text(
+                'До следующего уровня: ${LevelSystem.getNextLevelCycles(_cycleCount) - _cycleCount} циклов',
+                style: const TextStyle(fontSize: 13, color: Colors.grey),
+              ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        LinearProgressIndicator(
+          value: _getLevelProgress(),
+          minHeight: 8,
+          backgroundColor: Colors.grey.shade200,
+          color: const Color(0xFF6C63FF),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          _getLevelProgressText(),
+          style: const TextStyle(fontSize: 12, color: Colors.grey),
+        ),
+      ],
+    ),
+  ),
+),
           const SizedBox(height: 20),
           const Padding(
             padding: EdgeInsets.symmetric(horizontal: 24, vertical: 8),
@@ -3232,6 +3439,27 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 }
+
+class LevelSystem {
+  static int getCurrentLevel(int cycleCount) {
+    if (cycleCount >= 7) return 3;
+    if (cycleCount >= 3) return 2;
+    return 1;
+  }
+
+  static String getLevelName(int cycleCount) {
+    if (cycleCount >= 7) return 'Мастер';
+    if (cycleCount >= 3) return 'Исследователь';
+    return 'Новичок';
+  }
+
+  static int getNextLevelCycles(int cycleCount) {
+    if (cycleCount >= 7) return -1; // максимальный уровень
+    if (cycleCount >= 3) return 7;
+    return 3;
+  }
+}
+
 class BannerImagePreview extends StatefulWidget {
   final String imageUrl;
   final Rect? cropRect;
