@@ -16,7 +16,8 @@ import 'content_service.dart';
 
 import 'theme/app_theme.dart';
 import 'widgets/app_widgets.dart';
-
+import 'package:intl/intl.dart';
+import 'wheel_of_fortune.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp(
@@ -1079,6 +1080,8 @@ class _DealsGameScreenState extends State<DealsGameScreen> {
 
   Shop? _lastShop;
   String? _lastShopId;
+  String? _lastCafeDate;
+  String? _lastElectronicsDate;
   Shop? _pendingQRShop;
 
   List<BannerAd> _banners = [];
@@ -1253,6 +1256,8 @@ class _DealsGameScreenState extends State<DealsGameScreen> {
       final favList = List<String>.from(data['favoriteShops'] ?? []);
       _allShopsBonusClaimed = data['allShopsBonusClaimed'] == true;
       _favoriteShops = favList.toSet();
+      _lastCafeDate = data['lastCafeDate'] as String?;
+      _lastElectronicsDate = data['lastElectronicsDate'] as String?;
       final pendingIds = List<String>.from(data['pendingForkShops'] ?? []);
       List<Shop>? pendingShops;
       if (pendingIds.length == 2 && _allShops.isNotEmpty) {
@@ -1561,210 +1566,207 @@ List<Shop> _getVisibleShops() {
 
   // ----- МИНИ-КАРТА (логика карты НЕ ТРОНУТА, только контейнер вокруг) -----
   Widget _buildEnhancedMap() {
-    final categories = _allShops
-        .map((s) => s.category)
-        .where((c) => c.isNotEmpty)
-        .toSet()
-        .toList()
-      ..sort();
+  final categories = _allShops
+      .map((s) => s.category)
+      .where((c) => c.isNotEmpty)
+      .toSet()
+      .toList()
+    ..sort();
 
-    List<Shop> visibleShops = _getVisibleShops();
+  List<Shop> visibleShops = _getVisibleShops();
 
-print('Search: "$_searchQuery", Category: "$_selectedCategory", All shops: ${_allShops.length}, Visible: ${visibleShops.length}');
+  return Column(
+    children: [
+      // Поиск
+      Padding(
+        padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
+        child: TextField(
+          controller: _mapSearchController,
+          decoration: InputDecoration(
+            hintText: 'Поиск магазина',
+            prefixIcon: const Icon(Icons.search, color: AppColors.textSecondary),
+            suffixIcon: _searchQuery.isNotEmpty
+                ? IconButton(
+                    icon: const Icon(Icons.clear, color: AppColors.textSecondary),
+                    onPressed: () {
+                      _mapSearchController.clear();
+                      setState(() => _searchQuery = '');
+                    },
+                  )
+                : null,
+          ),
+          onChanged: (val) => setState(() => _searchQuery = val),
+        ),
+      ),
+      const SizedBox(height: AppSpacing.sm),
 
-    return Column(
-      children: [
-        // Поиск + категории-чипы (заменили dropdown)
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
-          child: TextField(
-            controller: _mapSearchController,
-            decoration: InputDecoration(
-              hintText: 'Поиск магазина',
-              prefixIcon: const Icon(Icons.search, color: AppColors.textSecondary),
-              suffixIcon: _searchQuery.isNotEmpty
-                  ? IconButton(
-                      icon: const Icon(Icons.clear, color: AppColors.textSecondary),
-                      onPressed: () {
-                        _mapSearchController.clear();
-                        setState(() => _searchQuery = '');
-                      },
-                    )
-                  : null,
-            ),
-            onChanged: (val) => setState(() => _searchQuery = val),
+      // Категории-чипы
+      if (categories.isNotEmpty)
+        SizedBox(
+          height: 40,
+          child: ListView(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
+            children: [
+              Padding(
+                padding: const EdgeInsets.only(right: 8),
+                child: CategoryChip(
+                  label: 'Все',
+                  selected: _selectedCategory == null,
+                  onTap: () => setState(() => _selectedCategory = null),
+                ),
+              ),
+              ...categories.map((cat) => Padding(
+                    padding: const EdgeInsets.only(right: 8),
+                    child: CategoryChip(
+                      label: cat,
+                      selected: _selectedCategory == cat,
+                      onTap: () => setState(() => _selectedCategory = cat),
+                    ),
+                  )),
+            ],
           ),
         ),
-        const SizedBox(height: AppSpacing.sm),
-        if (categories.isNotEmpty)
-          SizedBox(
-            height: 40,
-            child: ListView(
-              scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
-              children: [
-                Padding(
-                  padding: const EdgeInsets.only(right: 8),
-                  child: CategoryChip(
-                    label: 'Все',
-                    selected: _selectedCategory == null,
-                    onTap: () => setState(() => _selectedCategory = null),
-                  ),
-                ),
-                ...categories.map((cat) => Padding(
-                      padding: const EdgeInsets.only(right: 8),
-                      child: CategoryChip(
-                        label: cat,
-                        selected: _selectedCategory == cat,
-                        onTap: () => setState(() => _selectedCategory = cat),
-                      ),
-                    )),
-              ],
+      const SizedBox(height: AppSpacing.sm),
+
+      // Карта: занимает почти всю ширину, высота автоматическая
+      Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8),
+        child: AspectRatio(
+          aspectRatio: 2700 / 1536,
+          child: Container(
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(AppRadius.xl),
+              border: Border.all(color: AppColors.border),
             ),
-          ),
-        const SizedBox(height: AppSpacing.sm),
-        // Карта — логика НЕ ТРОНУТА
-        Container(
-          margin: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
-          height: 300,
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(AppRadius.xl),
-            border: Border.all(color: AppColors.border),
-          ),
-          clipBehavior: Clip.antiAlias,
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              const double imageWidth = 2045;
-              const double imageHeight = 731;
-              final double scaleX = constraints.maxWidth / imageWidth;
-              final double scaleY = constraints.maxHeight / imageHeight;
-              final double scale = math.min(scaleX, scaleY);
-              final double displayWidth = imageWidth * scale;
-              final double displayHeight = imageHeight * scale;
-              final double offsetX = (constraints.maxWidth - displayWidth) / 2;
-              final double offsetY = (constraints.maxHeight - displayHeight) / 2;
+            clipBehavior: Clip.antiAlias,
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                return Stack(
+                  children: [
+                    Container(color: AppColors.surfaceVariant),
+                    Image.asset(
+                      'assets/images/mall_map.png',
+                      width: constraints.maxWidth,
+                      height: constraints.maxHeight,
+                      fit: BoxFit.fill,
+                    ),
+                    ...visibleShops.where((s) => s.mapX != null && s.mapY != null).map((shop) {
+                      final bool isHovered = _hoveredShopId == shop.id;
+                      final bool isRouteTarget = (_selectedRouteShop?.id == shop.id);
+                      if (shop.mapWidth == null ||
+                          shop.mapHeight == null ||
+                          shop.mapWidth! <= 0 ||
+                          shop.mapHeight! <= 0) {
+                        return const SizedBox.shrink();
+                      }
 
-              return Stack(
-                children: [
-                  Container(color: AppColors.surfaceVariant),
-                  Image.asset(
-                    'assets/images/mall_map.png',
-                    width: constraints.maxWidth,
-                    height: constraints.maxHeight,
-                    fit: BoxFit.contain,
-                  ),
-                  ...visibleShops.where((s) => s.mapX != null && s.mapY != null).map((shop) {
-                    final bool isHovered = _hoveredShopId == shop.id;
-                    final bool isRouteTarget = (_selectedRouteShop?.id == shop.id);
-                    if (shop.mapWidth == null || shop.mapHeight == null ||
-                        shop.mapWidth! <= 0 || shop.mapHeight! <= 0) {
-                      return const SizedBox.shrink();
-                    }
+                      final double x = shop.mapX! * constraints.maxWidth;
+                      final double y = shop.mapY! * constraints.maxHeight;
+                      final double w = shop.mapWidth! * constraints.maxWidth;
+                      final double h = shop.mapHeight! * constraints.maxHeight;
 
-                    double w = shop.mapWidth! * imageWidth;
-                    double h = shop.mapHeight! * imageHeight;
-                    final double xOnImage = shop.mapX! * imageWidth;
-                    final double yOnImage = shop.mapY! * imageHeight;
-                    final double left = (xOnImage - w / 2) * scale + offsetX;
-                    final double top = (yOnImage - h / 2) * scale + offsetY;
-                    final double rectWidth = w * scale;
-                    final double rectHeight = h * scale;
-
-                    return Positioned(
-                      left: left,
-                      top: top,
-                      width: rectWidth,
-                      height: rectHeight,
-                      child: GestureDetector(
-                        onTap: () {
-                          setState(() {
-                            _selectedRouteShop = shop;
-                            _hoveredShopId = shop.id;
-                          });
-                        },
-                        child: MouseRegion(
-                          onEnter: (_) => setState(() => _hoveredShopId = shop.id),
-                          onExit: (_) => setState(() => _hoveredShopId = null),
-                          child: AnimatedContainer(
-                            duration: const Duration(milliseconds: 200),
-                            decoration: BoxDecoration(
-                              color: (isHovered || isRouteTarget)
-                                  ? AppColors.primary.withOpacity(0.35)
-                                  : Colors.transparent,
-                              border: Border.all(
-                                color: isRouteTarget
-                                    ? AppColors.accent
-                                    : (isHovered ? AppColors.primary : Colors.transparent),
-                                width: 2,
+                      return Positioned(
+                        left: x - w / 2,
+                        top: y - h / 2,
+                        width: w,
+                        height: h,
+                        child: GestureDetector(
+                          onTap: () {
+                            setState(() {
+                              _selectedRouteShop = shop;
+                              _hoveredShopId = shop.id;
+                            });
+                          },
+                          child: MouseRegion(
+                            onEnter: (_) => setState(() => _hoveredShopId = shop.id),
+                            onExit: (_) => setState(() => _hoveredShopId = null),
+                            child: AnimatedContainer(
+                              duration: const Duration(milliseconds: 200),
+                              decoration: BoxDecoration(
+                                color: (isHovered || isRouteTarget)
+                                    ? AppColors.primary.withOpacity(0.35)
+                                    : Colors.transparent,
+                                border: Border.all(
+                                  color: isRouteTarget
+                                      ? AppColors.accent
+                                      : (isHovered ? AppColors.primary : Colors.transparent),
+                                  width: 2,
+                                ),
+                                borderRadius: BorderRadius.circular(2),
                               ),
-                              borderRadius: BorderRadius.circular(2),
                             ),
                           ),
                         ),
-                      ),
-                    );
-                  }).toList(),
-                  if (_selectedRouteShop != null)
-                    CustomPaint(
-                      size: Size(constraints.maxWidth, constraints.maxHeight),
-                      painter: _RoutePainter(
-                        from: Offset(
-                          _entrancePosition.dx * imageWidth * scale + offsetX,
-                          _entrancePosition.dy * imageHeight * scale + offsetY,
+                      );
+                    }).toList(),
+                    if (_selectedRouteShop != null)
+                      CustomPaint(
+                        size: Size(constraints.maxWidth, constraints.maxHeight),
+                        painter: _RoutePainter(
+                          from: Offset(
+                            _entrancePosition.dx * constraints.maxWidth,
+                            _entrancePosition.dy * constraints.maxHeight,
+                          ),
+                          to: Offset(
+                            _selectedRouteShop!.mapX! * constraints.maxWidth,
+                            _selectedRouteShop!.mapY! * constraints.maxHeight,
+                          ),
                         ),
-                        to: Offset(
-                          _selectedRouteShop!.mapX! * imageWidth * scale + offsetX,
-                          _selectedRouteShop!.mapY! * imageHeight * scale + offsetY,
-                        ),
                       ),
-                    ),
-                ],
-              );
-            },
+                  ],
+                );
+              },
+            ),
           ),
         ),
-        if (_selectedRouteShop != null)
-          Padding(
-            padding: const EdgeInsets.only(top: 4),
-            child: TextButton.icon(
-              icon: const Icon(Icons.close, size: 16),
-              label: Text('Сбросить маршрут до ${_selectedRouteShop!.name}'),
-              onPressed: () => setState(() {
-                _selectedRouteShop = null;
-                _hoveredShopId = null;
-              }),
+      ),
+
+      // Кнопка сброса маршрута
+      if (_selectedRouteShop != null)
+        Padding(
+          padding: const EdgeInsets.only(top: 4),
+          child: TextButton.icon(
+            icon: const Icon(Icons.close, size: 16),
+            label: Text('Сбросить маршрут до ${_selectedRouteShop!.name}'),
+            onPressed: () => setState(() {
+              _selectedRouteShop = null;
+              _hoveredShopId = null;
+            }),
+          ),
+        ),
+
+      // Информация о выбранном магазине
+      if (_selectedRouteShop != null)
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md, vertical: AppSpacing.sm),
+          child: AppCard(
+            color: AppColors.accentContainer,
+            child: Row(
+              children: [
+                Text(_selectedRouteShop!.icon, style: const TextStyle(fontSize: 32)),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(_selectedRouteShop!.name, style: AppTextStyles.title),
+                      Text(_selectedRouteShop!.discount, style: AppTextStyles.bodyMedium),
+                    ],
+                  ),
+                ),
+                ElevatedButton(
+                  onPressed: () => _activateShop(_selectedRouteShop!),
+                  style: ElevatedButton.styleFrom(backgroundColor: AppColors.accent),
+                  child: const Text('В путь'),
+                ),
+              ],
             ),
           ),
-        if (_selectedRouteShop != null)
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md, vertical: AppSpacing.sm),
-            child: AppCard(
-              color: AppColors.accentContainer,
-              child: Row(
-                children: [
-                  Text(_selectedRouteShop!.icon, style: const TextStyle(fontSize: 32)),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(_selectedRouteShop!.name, style: AppTextStyles.title),
-                        Text(_selectedRouteShop!.discount, style: AppTextStyles.bodyMedium),
-                      ],
-                    ),
-                  ),
-                  ElevatedButton(
-                    onPressed: () => _activateShop(_selectedRouteShop!),
-                    style: ElevatedButton.styleFrom(backgroundColor: AppColors.accent),
-                    child: const Text('В путь'),
-                  ),
-                ],
-              ),
-            ),
-          ),
-      ],
-    );
-  }
+        ),
+    ],
+  );
+}
 
   // ----- ОСТАЛЬНЫЕ МЕТОДЫ КВЕСТА -----
   Future<void> _showLocationPicker({bool isChanging = false}) async {
@@ -1871,27 +1873,75 @@ print('Search: "$_searchQuery", Category: "$_selectedCategory", All shops: ${_al
     );
   }
 
-  List<Shop> _getNextTwoShops(Shop currentShop) {
-    var available = _allShops.where((s) => !_usedShopIds.contains(s.id) && s.id != currentShop.id).toList();
-    if (available.length < 2) return available;
-    final weighted = <Shop>[];
-    for (var shop in available) {
-      int weight = shop.priority;
-      if (_favoriteShops.contains(shop.id)) {
-        weight += 3;
-      }
-      for (int i = 0; i < weight; i++) weighted.add(shop);
-    }
-    weighted.shuffle();
-    final selected = <Shop>[];
-    for (var shop in weighted) {
-      if (!selected.contains(shop)) {
-        selected.add(shop);
-        if (selected.length == 2) break;
-      }
-    }
-    return selected;
+List<Shop> _getAvailableForFork(Shop? currentShop) {
+  final todayStr = DateFormat('yyyy-MM-dd').format(DateTime.now());
+  var available = _allShops.where((s) {
+    if (currentShop != null && s.id == currentShop.id) return false;
+    if (_usedShopIds.contains(s.id)) return false;
+    if (s.category == 'cafe' && _lastCafeDate == todayStr) return false;
+    if (s.category == 'electronics' && _lastElectronicsDate == todayStr) return false;
+    return true;
+  }).toList();
+
+  // Если после фильтрации осталось меньше двух, возвращаем без ограничения по датам,
+  // но всё ещё исключая использованные и текущий магазин.
+  if (available.length < 2) {
+    available = _allShops.where((s) {
+      if (currentShop != null && s.id == currentShop.id) return false;
+      if (_usedShopIds.contains(s.id)) return false;
+      return true;
+    }).toList();
   }
+  return available;
+}
+
+  List<Shop> _getNextTwoShops(Shop currentShop) {
+  var available = _getAvailableForFork(currentShop);
+  if (available.length < 2) return available;
+
+  // Взвешенный список (как раньше)
+  final weighted = <Shop>[];
+  for (var shop in available) {
+    int weight = shop.priority;
+    if (_favoriteShops.contains(shop.id)) {
+      weight += 3;
+    }
+    for (int i = 0; i < weight; i++) weighted.add(shop);
+  }
+  weighted.shuffle();
+
+  final selected = <Shop>[];
+  final Set<String> usedCategories = {}; // для контроля нежелательных категорий
+
+  // Функция проверки: можно ли добавить магазин с учётом ограничения
+  bool isAllowed(Shop shop) {
+    if (shop.category == 'cafe' || shop.category == 'electronics') {
+      if (usedCategories.contains(shop.category)) return false;
+    }
+    return true;
+  }
+
+  // Основной проход с ограничением
+  for (var shop in weighted) {
+    if (selected.contains(shop)) continue;
+    if (!isAllowed(shop)) continue;
+    selected.add(shop);
+    usedCategories.add(shop.category);
+    if (selected.length == 2) break;
+  }
+
+  // Если не набрали двух из-за ограничений, добавляем любых оставшихся
+  if (selected.length < 2) {
+    for (var shop in weighted) {
+      if (selected.contains(shop)) continue;
+      selected.add(shop);
+      usedCategories.add(shop.category);
+      if (selected.length == 2) break;
+    }
+  }
+
+  return selected;
+}
 
   List<String> _getRelatedCategories(String cat) {
     switch (cat) {
@@ -1931,87 +1981,110 @@ print('Search: "$_searchQuery", Category: "$_selectedCategory", All shops: ${_al
   }
 
   Future<void> _showForkDialog(Shop currentShop) async {
-    final nextShops = _getNextTwoShops(currentShop);
+  final nextShops = _getNextTwoShops(currentShop);
 
-    final collab = await _getActiveCollab(currentShop);
-    final hasCollab = collab != null;
-    final toShop = hasCollab ? collab!['toShop'] as Shop : null;
-    final collabDocId = hasCollab ? collab!['collabDocId'] as String : null;
+  final collab = await _getActiveCollab(currentShop);
+  final hasCollab = collab != null;
+  final toShop = hasCollab ? collab!['toShop'] as Shop : null;
+  final collabDocId = hasCollab ? collab!['collabDocId'] as String : null;
 
-    if (hasCollab) {
-      nextShops.removeWhere((shop) => shop.id == toShop!.id);
+  if (hasCollab) {
+    nextShops.removeWhere((shop) => shop.id == toShop!.id);
+  }
+
+  if (nextShops.isEmpty && !hasCollab) {
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Нет доступных магазинов для продолжения. Сбросьте прогресс.')),
+      );
     }
+    return;
+  }
 
-    if (nextShops.isEmpty && !hasCollab) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Нет доступных магазинов для продолжения. Сбросьте прогресс.')),
-        );
-      }
-      return;
-    }
+  // 🆕 Логирование для отладки (исправлен null)
+  try {
+    await _firestore.collection('debug_fork_logs').add({
+      'timestamp': FieldValue.serverTimestamp(),
+      'userId': _userId,
+      'currentShopId': currentShop.id,
+      'currentShopName': currentShop.name ?? 'Unknown',
+      'candidateShops': nextShops.map((s) {
+        return {
+          'shopId': s.id,
+          'name': s.name,
+          'priority': s.priority,
+          'isFavorite': _favoriteShops.contains(s.id),
+        };
+      }).toList(),
+      'collabShopId': hasCollab ? toShop!.id : '',
+      'collabShopName': hasCollab ? (toShop?.name ?? '') : '',
+      'selectedShops': nextShops.take(2).map((s) => s.id).toList(),
+    });
+  } catch (e) {
+    print('❌ Ошибка записи debug_fork_logs: $e');
+  }
 
-    await showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => AlertDialog(
-        title: const Text('Выбери путь дальше'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text('Вы получили скидку в ${currentShop.name}. Куда отправимся дальше?'),
-            const SizedBox(height: 16),
-            Wrap(
-              spacing: 16,
-              runSpacing: 12,
-              alignment: WrapAlignment.center,
-              children: [
-                for (final shop in nextShops)
-                  _ChoiceButton(
-                    shop: shop,
-                    onTap: _activateShop,
-                    isCollab: false,
-                    onCollabActivated: (trigger, shop) => _checkBonuses(trigger, currentShop: shop),
-                  ),
-                if (hasCollab)
-                  _ChoiceButton(
-                    shop: toShop!,
-                    onTap: _activateShop,
-                    isCollab: true,
-                    collabDocId: collabDocId,
-                    onCollabActivated: (trigger, shop) => _checkBonuses(trigger, currentShop: shop),
-                  ),
-              ],
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () {
-              Navigator.pop(context);
-              setState(() {
-                _pendingForkShops = nextShops.isNotEmpty ? nextShops : null;
-                _isPathActive = true;
-                _lastShopId = currentShop.id;
-                _lastShop = currentShop;
-              });
-              _saveProgress();
-            },
-            style: TextButton.styleFrom(foregroundColor: AppColors.textPrimary),
-            child: const Text('Закончить путь (продолжить позже)'),
-          ),
-          TextButton(
-            onPressed: () async {
-              Navigator.pop(context);
-              await _resetProgress();
-            },
-            style: TextButton.styleFrom(foregroundColor: AppColors.textPrimary),
-            child: const Text('Сбросить путь'),
+  await showDialog(
+    context: context,
+    barrierDismissible: false,
+    builder: (context) => AlertDialog(
+      title: const Text('Выбери путь дальше'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text('Вы получили скидку в ${currentShop.name}. Куда отправимся дальше?'),
+          const SizedBox(height: 16),
+          Wrap(
+            spacing: 16,
+            runSpacing: 12,
+            alignment: WrapAlignment.center,
+            children: [
+              for (final shop in nextShops)
+                _ChoiceButton(
+                  shop: shop,
+                  onTap: _activateShop,
+                  isCollab: false,
+                  onCollabActivated: (trigger, shop) => _checkBonuses(trigger, currentShop: shop),
+                ),
+              if (hasCollab)
+                _ChoiceButton(
+                  shop: toShop!,
+                  onTap: _activateShop,
+                  isCollab: true,
+                  collabDocId: collabDocId,
+                  onCollabActivated: (trigger, shop) => _checkBonuses(trigger, currentShop: shop),
+                ),
+            ],
           ),
         ],
       ),
-    );
-  }
+      actions: [
+        TextButton(
+          onPressed: () {
+            Navigator.pop(context);
+            setState(() {
+              _pendingForkShops = nextShops.isNotEmpty ? nextShops : null;
+              _isPathActive = true;
+              _lastShopId = currentShop.id;
+              _lastShop = currentShop;
+            });
+            _saveProgress();
+          },
+          style: TextButton.styleFrom(foregroundColor: AppColors.textPrimary),
+          child: const Text('Закончить путь (продолжить позже)'),
+        ),
+        TextButton(
+          onPressed: () async {
+            Navigator.pop(context);
+            await _resetProgress();
+          },
+          style: TextButton.styleFrom(foregroundColor: AppColors.textPrimary),
+          child: const Text('Сбросить путь'),
+        ),
+      ],
+    ),
+  );
+}
 
   Widget _forkButton(Shop shop, {required bool isCollab, String? collabDocId}) {
     final String discountText = shop.shortDiscount.isNotEmpty ? shop.shortDiscount : shop.discount;
@@ -2106,6 +2179,19 @@ print('Search: "$_searchQuery", Category: "$_selectedCategory", All shops: ${_al
     });
     await _saveProgress();
 
+final todayStr = DateFormat('yyyy-MM-dd').format(DateTime.now());
+Map<String, dynamic> dateUpdates = {};
+if (shop.category == 'cafe') {
+  _lastCafeDate = todayStr;
+  dateUpdates['lastCafeDate'] = todayStr;
+} else if (shop.category == 'electronics') {
+  _lastElectronicsDate = todayStr;
+  dateUpdates['lastElectronicsDate'] = todayStr;
+}
+if (dateUpdates.isNotEmpty) {
+  await _firestore.collection('user_progress').doc(_userId).update(dateUpdates);
+}
+
     await _firestore.collection('user_progress').doc(_userId).update({
       'allVisitedShopIds': FieldValue.arrayUnion([shop.id]),
     });
@@ -2177,6 +2263,15 @@ print('Search: "$_searchQuery", Category: "$_selectedCategory", All shops: ${_al
     });
   }
 
+Future<void> _showWheelOfFortune() async {
+  final prizes = getDefaultWheelPrizes();
+  await showDialog(
+    context: context,
+    barrierDismissible: false,
+    builder: (ctx) => WheelOfFortuneDialog(prizes: prizes, userId: _userId),
+  );
+}
+
   Future<void> _startNewCycle() async {
     final newCycleCount = _cycleCount + 1;
     await _firestore.collection('user_progress').doc(_userId).update({
@@ -2229,6 +2324,9 @@ print('Search: "$_searchQuery", Category: "$_selectedCategory", All shops: ${_al
     await _updateTaskProgress('complete_quest');
     if (!mounted) return;
     await _checkBonuses('cycle_completed');
+    if (mounted) {
+      await _showWheelOfFortune();
+  }
   }
 
   Future<bool?> _showQRDialog(Shop shop) async {
@@ -2302,7 +2400,7 @@ print('Search: "$_searchQuery", Category: "$_selectedCategory", All shops: ${_al
 
   Future<void> _showFirstChoice() async {
     if (_allShops.isEmpty) return;
-    var available = _allShops.where((s) => !_usedShopIds.contains(s.id)).toList();
+    var available = _getAvailableForFork(null);
     if (available.isEmpty) return;
     available.shuffle();
     final first = available.take(2).toList();

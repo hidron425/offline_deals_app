@@ -83,7 +83,6 @@ class _MallMapScreenState extends State<MallMapScreen> {
       );
     }
 
-    // Отфильтруем магазины с корректными координатами
     final validShops = _shops.where((s) => s.mapX != null && s.mapY != null).toList();
 
     return Scaffold(
@@ -92,43 +91,51 @@ class _MallMapScreenState extends State<MallMapScreen> {
         transformationController: _transformController,
         minScale: 0.5,
         maxScale: 3.0,
-        child: LayoutBuilder(
-          builder: (context, constraints) {
-            return Stack(
-              children: [
-                Image.asset(
-                  'assets/images/mall_map.png',
-                  width: constraints.maxWidth,
-                  height: constraints.maxHeight,
-                  fit: BoxFit.contain,
-                ),
-                ...validShops.map((shop) {
-                  final double x = shop.mapX! * constraints.maxWidth;
-                  final double y = shop.mapY! * constraints.maxHeight;
-                  return Positioned(
-                    left: x - 15,
-                    top: y - 15,
-                    child: GestureDetector(
-                      onTap: () => _showShopInfo(shop),
-                      child: Container(
-                        width: 30,
-                        height: 30,
-                        decoration: BoxDecoration(
-                          color: const Color(0xFF6C63FF).withOpacity(0.8),
-                          shape: BoxShape.circle,
-                          border: Border.all(color: Colors.white, width: 2),
-                        ),
-                        child: Center(
-                          child: Text(shop.icon,
-                              style: const TextStyle(fontSize: 14)),
-                        ),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxHeight: 300),   // ← высота карты
+          child: Center(
+            child: AspectRatio(
+              aspectRatio: 2700 / 1536,
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  return Stack(
+                    children: [
+                      Image.asset(
+                        'assets/images/mall_map.png',
+                        width: constraints.maxWidth,
+                        height: constraints.maxHeight,
+                        fit: BoxFit.fill,
                       ),
-                    ),
+                      ...validShops.map((shop) {
+                        final double x = shop.mapX! * constraints.maxWidth;
+                        final double y = shop.mapY! * constraints.maxHeight;
+                        return Positioned(
+                          left: x - 15,
+                          top: y - 15,
+                          child: GestureDetector(
+                            onTap: () => _showShopInfo(shop),
+                            child: Container(
+                              width: 30,
+                              height: 30,
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF6C63FF).withOpacity(0.8),
+                                shape: BoxShape.circle,
+                                border: Border.all(color: Colors.white, width: 2),
+                              ),
+                              child: Center(
+                                child: Text(shop.icon,
+                                    style: const TextStyle(fontSize: 14)),
+                              ),
+                            ),
+                          ),
+                        );
+                      }).toList(),
+                    ],
                   );
-                }).toList(),
-              ],
-            );
-          },
+                },
+              ),
+            ),
+          ),
         ),
       ),
     );
