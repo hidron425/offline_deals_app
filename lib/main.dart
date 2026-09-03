@@ -18,6 +18,8 @@ import 'theme/app_theme.dart';
 import 'widgets/app_widgets.dart';
 import 'package:intl/intl.dart';
 import 'wheel_of_fortune.dart';
+import 'package:flutter/gestures.dart';
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp(
@@ -1086,6 +1088,8 @@ class _DealsGameScreenState extends State<DealsGameScreen> {
 
   List<BannerAd> _banners = [];
   Map<String, Shop> _shopById = {};
+  final TransformationController _mapTransformationController = TransformationController();
+  double _mapScale = 1.0;
 
   @override
   void initState() {
@@ -1102,102 +1106,133 @@ class _DealsGameScreenState extends State<DealsGameScreen> {
     ContentService.preload(['home_welcome', 'quest_rules']);
   }
 
-  Future<void> _ensureDailyTasks() async {
-    final doc = await _firestore.collection('user_progress').doc(_userId).get();
-    final data = doc.data() ?? {};
-    final lastGenerated = (data['dailyTasksGeneratedAt'] as Timestamp?)?.toDate();
-    final now = DateTime.now();
+  @override
+void dispose() {
+  _mapSearchController.dispose();
+  _mapTransformationController.dispose();
+  super.dispose();
+}
 
-    if (lastGenerated == null || lastGenerated.day != now.day || lastGenerated.month != now.month || lastGenerated.year != now.year) {
-      final tasks = _generateDailyTasks();
-      await _firestore.collection('user_progress').doc(_userId).update({
-        'dailyTasks': tasks,
-        'dailyTasksGeneratedAt': Timestamp.fromDate(now),
-      });
-    }
+  Future<void> _ensureDailyTasks() async {
+  final doc = await _firestore.collection('user_progress').doc(_userId).get();
+  final data = doc.data() ?? {};
+  final lastGenerated = (data['dailyTasksGeneratedAt'] as Timestamp?)?.toDate();
+  final now = DateTime.now();
+
+  if (lastGenerated == null ||
+      lastGenerated.year != now.year ||
+      lastGenerated.month != now.month ||
+      lastGenerated.day != now.day) {
+    final tasks = _generateDailyTasks();
+    await _firestore.collection('user_progress').doc(_userId).update({
+      'dailyTasks': tasks,
+      'dailyTasksGeneratedAt': Timestamp.fromDate(now),
+    });
+    print('✅ Ежедневные задания сгенерированы: $tasks');
+  } else {
+    print('ℹ️ Задания уже существуют на сегодня');
   }
+}
 
   List<Map<String, dynamic>> _generateDailyTasks() {
-    final categories = _allShops.map((s) => s.category).where((c) => c.isNotEmpty).toSet().toList();
-    final randomCategory = categories.isNotEmpty ? categories[math.Random().nextInt(categories.length)] : 'cafe';
+  final categories = _allShops.map((s) => s.category).where((c) => c.isNotEmpty).toSet().toList();
+  final randomCategory = categories.isNotEmpty ? categories[math.Random().nextInt(categories.length)] : 'cafe';
 
-    return [
-      {
-        'id': 'task_1',
-        'type': 'complete_quest',
-        'description': 'Завершите один квест',
-        'reward': 50,
-        'progress': 0,
-        'target': 1,
-        'completed': false,
-      },
-      {
-        'id': 'task_2',
-        'type': 'visit_category',
-        'category': randomCategory,
-        'description': 'Посетите магазин категории "$randomCategory"',
-        'reward': 30,
-        'progress': 0,
-        'target': 1,
-        'completed': false,
-      },
-      {
-        'id': 'task_3',
-        'type': 'invite_friend',
-        'description': 'Пригласите друга (поделитесь кодом)',
-        'reward': 20,
-        'progress': 0,
-        'target': 1,
-        'completed': false,
-      },
-    ];
+  final tasks = [
+    {
+      'id': 'task_1',
+      'type': 'complete_quest',
+      'description': 'Завершите один квест',
+      'reward': 50,
+      'progress': 0,
+      'target': 1,
+      'completed': false,
+    },
+    {
+      'id': 'task_2',
+      'type': 'visit_category',
+      'category': randomCategory,
+      'description': 'Посетите магазин категории "$randomCategory"',
+      'reward': 30,
+      'progress': 0,
+      'target': 1,
+      'completed': false,
+    },
+    {
+      'id': 'task_3',
+      'type': 'invite_friend',
+      'description': 'Пригласите друга (поделитесь кодом)',
+      'reward': 20,
+      'progress': 0,
+      'target': 1,
+      'completed': false,
+    },
+  ];
+  print('✅ Сгенерированы задачи: $tasks');
+  return tasks;
+}
+
+ Future<void> _updateTaskProgress(String type, {String? category}) async {
+  print('🔔 _updateTaskProgress called: type=$type, category=$category');
+  final docRef = _firestore.collection('user_progress').doc(_userId);
+  final doc = await docRef.get();
+  if (!doc.exists) {
+    print('❌ user_progress документ не найден');
+    return;
   }
+  final data = doc.data()!;
+  final tasks = List<Map<String, dynamic>>.from(data['dailyTasks'] ?? []);
+  print('📋 Текущие задачи: $tasks');
 
-  Future<void> _updateTaskProgress(String type, {String? category}) async {
-    final doc = await _firestore.collection('user_progress').doc(_userId).get();
-    final data = doc.data() ?? {};
-    final tasks = List<Map<String, dynamic>>.from(data['dailyTasks'] ?? []);
-    bool changed = false;
+  bool changed = false;
+  int rewardToAdd = 0;
 
-    for (int i = 0; i < tasks.length; i++) {
-      final task = Map<String, dynamic>.from(tasks[i]);
-      if (task['completed'] == true) continue;
+  for (int i = 0; i < tasks.length; i++) {
+    final task = Map<String, dynamic>.from(tasks[i]);
+    if (task['completed'] == true) continue;
 
-      if (task['type'] == type) {
-        if (type == 'visit_category' && category != null && task['category'] != category) continue;
+    if (task['type'] == type) {
+      if (type == 'visit_category' && category != null && task['category'] != category) continue;
 
-        final newProgress = (task['progress'] as int) + 1;
-        task['progress'] = newProgress;
-        if (newProgress >= (task['target'] as int)) {
-          task['completed'] = true;
-          final reward = task['reward'] as int;
-          await _firestore.collection('user_progress').doc(_userId).update({
-            'coins': FieldValue.increment(reward),
-            'dailyTasks': tasks,
-          });
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text('Задание выполнено! +$reward монет'),
-                backgroundColor: AppColors.success,
-                behavior: SnackBarBehavior.floating,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppRadius.md)),
-              ),
-            );
-          }
-          changed = true;
-          break;
-        }
-        tasks[i] = task;
-        changed = true;
-        break;
+      final currentProgress = (task['progress'] as int?) ?? 0;
+      final newProgress = currentProgress + 1;
+      task['progress'] = newProgress;
+      if (newProgress >= (task['target'] as int? ?? 1)) {
+        task['completed'] = true;
+        rewardToAdd = task['reward'] as int? ?? 0;
+        print('✅ Задание "$type" выполнено, начисляем $rewardToAdd монет');
       }
-    }
-
-    if (changed) {
-      await _firestore.collection('user_progress').doc(_userId).update({'dailyTasks': tasks});
+      tasks[i] = task;
+      changed = true;
+      break;
     }
   }
+
+  if (!changed) {
+    print('ℹ️ Нет незавершённых задач типа $type');
+    return;
+  }
+
+  // Обновляем задачи
+  await docRef.update({'dailyTasks': tasks});
+
+  // Начисляем монеты, если есть награда
+  if (rewardToAdd > 0) {
+    await docRef.update({'coins': FieldValue.increment(rewardToAdd)});
+    print('💰 Монеты начислены: +$rewardToAdd');
+  }
+
+  if (mounted && rewardToAdd > 0) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Задание выполнено! +$rewardToAdd монет'),
+        backgroundColor: AppColors.success,
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppRadius.md)),
+      ),
+    );
+  }
+}
 
   Future<void> _loadAll() async {
     await _loadUserLocation();
@@ -1336,96 +1371,118 @@ class _DealsGameScreenState extends State<DealsGameScreen> {
   }
 
   Future<void> _fullReset() async {
-    setState(() {
-      _completedSteps = 0;
-      _usedShopIds.clear();
-      _isPathActive = false;
-      _pendingForkShops = null;
-      _selectedCity = null;
-      _selectedMall = null;
-      _selectedMallId = null;
-      _isLoading = true;
-      _cycleCount = 0;
-      _lastShop = null;
-      _lastShopId = null;
-    });
+  setState(() {
+    _completedSteps = 0;
+    _usedShopIds.clear();
+    _isPathActive = false;
+    _pendingForkShops = null;
+    _selectedCity = null;
+    _selectedMall = null;
+    _selectedMallId = null;
+    _isLoading = true;
+    _cycleCount = 0;
+    _lastShop = null;
+    _lastShopId = null;
+    _lastCafeDate = null;
+    _lastElectronicsDate = null;
+  });
+
+  await _firestore.collection('user_progress').doc(_userId).update({
+    'completedSteps': 0,
+    'usedShopIds': [],
+    'pendingBonuses': [],
+    'claimedBonuses': [],
+    'bonusClaimed': FieldValue.delete(),
+    'selectedCity': FieldValue.delete(),
+    'selectedMall': FieldValue.delete(),
+    'selectedMallId': FieldValue.delete(),
+    'pendingForkShops': [],
+    'cycleCount': 0,
+    'lastShopId': FieldValue.delete(),
+    'isPathActive': false,
+    'coins': 0,
+    'subscribedShops': [],
+    'favoriteShops': [],
+    'dailyTasks': [],
+    'purchasedRewards': [],
+    'allVisitedShopIds': [],
+    'allShopsBonusClaimed': false,
+    'lastCafeDate': FieldValue.delete(),
+    'lastElectronicsDate': FieldValue.delete(),
+    'referredBy': FieldValue.delete(),
+    'dailyTasksGeneratedAt': FieldValue.delete(),
+  });
+
+  // Заново загружаем всё и генерируем задания
+  await _loadAll();
+}
+
+  Future<bool> _checkBonuses(String trigger, {Shop? currentShop}) async {
+  bool anyBonus = false;
+
+  final userDoc = await _firestore.collection('user_progress').doc(_userId).get();
+  final userData = userDoc.data()!;
+  final pending = List<String>.from(userData['pendingBonuses'] ?? []);
+  final claimed = List<String>.from(userData['claimedBonuses'] ?? []);
+  final cycleCount = userData['cycleCount'] ?? 0;
+  final completedSteps = userData['completedSteps'] ?? 0;
+
+  final rulesSnap = await _firestore
+      .collection('bonus_rules')
+      .where('active', isEqualTo: true)
+      .where('trigger', isEqualTo: trigger)
+      .get();
+
+  for (var doc in rulesSnap.docs) {
+    final rule = doc.data() as Map<String, dynamic>;
+    final conditions = rule['conditions'] as Map<String, dynamic>? ?? {};
+
+    if (conditions['cycleCount'] != null && cycleCount != conditions['cycleCount']) continue;
+    if (conditions['stepCount'] != null && completedSteps != conditions['stepCount']) continue;
+    if (conditions['minStepsCompleted'] != null && completedSteps < conditions['minStepsCompleted']) continue;
+    if (conditions['shopId'] != null && currentShop?.id != conditions['shopId']) continue;
+    if (conditions['category'] != null && currentShop?.category != conditions['category']) continue;
+
+    if (rule['oncePerUser'] == true) {
+      if (pending.contains(doc.id) || claimed.contains(doc.id)) continue;
+    }
+
     await _firestore.collection('user_progress').doc(_userId).update({
-      'completedSteps': 0,
-      'usedShopIds': [],
-      'pendingBonuses': [],
-      'claimedBonuses': [],
-      'bonusClaimed': FieldValue.delete(),
-      'selectedCity': FieldValue.delete(),
-      'selectedMall': FieldValue.delete(),
-      'selectedMallId': FieldValue.delete(),
-      'pendingForkShops': [],
-      'cycleCount': 0,
-      'lastShopId': FieldValue.delete(),
-      'isPathActive': false,
+      'pendingBonuses': FieldValue.arrayUnion([doc.id]),
     });
-    await _loadAll();
-  }
 
-  Future<void> _checkBonuses(String trigger, {Shop? currentShop}) async {
-    final userDoc = await _firestore.collection('user_progress').doc(_userId).get();
-    final userData = userDoc.data()!;
-    final pending = List<String>.from(userData['pendingBonuses'] ?? []);
-    final claimed = List<String>.from(userData['claimedBonuses'] ?? []);
-    final cycleCount = userData['cycleCount'] ?? 0;
-    final completedSteps = userData['completedSteps'] ?? 0;
+    anyBonus = true;   // <-- обязательно!
 
-    final rulesSnap = await _firestore
-        .collection('bonus_rules')
-        .where('active', isEqualTo: true)
-        .where('trigger', isEqualTo: trigger)
-        .get();
-
-    for (var doc in rulesSnap.docs) {
-      final rule = doc.data() as Map<String, dynamic>;
-      final conditions = rule['conditions'] as Map<String, dynamic>? ?? {};
-
-      if (conditions['cycleCount'] != null && cycleCount != conditions['cycleCount']) continue;
-      if (conditions['stepCount'] != null && completedSteps != conditions['stepCount']) continue;
-      if (conditions['minStepsCompleted'] != null && completedSteps < conditions['minStepsCompleted']) continue;
-      if (conditions['shopId'] != null && currentShop?.id != conditions['shopId']) continue;
-      if (conditions['category'] != null && currentShop?.category != conditions['category']) continue;
-
-      if (rule['oncePerUser'] == true) {
-        if (pending.contains(doc.id) || claimed.contains(doc.id)) continue;
-      }
-
-      await _firestore.collection('user_progress').doc(_userId).update({
-        'pendingBonuses': FieldValue.arrayUnion([doc.id]),
-      });
-
-      if (mounted) {
-        final reward = rule['reward'] as Map<String, dynamic>? ?? {};
-        final title = reward['title'] ?? 'Новый бонус!';
-        final message = reward['message'] ?? 'Зайдите в профиль, чтобы получить.';
-        final icon = reward['icon'] ?? '🎁';
-        showDialog(
-          context: context,
-          builder: (_) => AlertDialog(
-            title: Text('$icon $title'),
-            content: Text(message),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text('Позже'),
-              ),
-              ElevatedButton(
-                onPressed: () {
-                  Navigator.pop(context);
-                  context.findAncestorStateOfType<_MainScreenState>()?.setTab(2);
-                },
-                child: const Text('В профиль'),
-              ),
-            ],
-          ),
-        );
-      }
+    if (mounted) {
+      final reward = rule['reward'] as Map<String, dynamic>? ?? {};
+      final title = reward['title'] ?? 'Новый бонус!';
+      final message = reward['message'] ?? 'Зайдите в профиль, чтобы получить.';
+      final icon = reward['icon'] ?? '🎁';
+      await showDialog(
+        context: context,
+        builder: (_) => AlertDialog(
+          title: Text('$icon $title'),
+          content: Text(message),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Позже'),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                Navigator.pop(context);
+                context.findAncestorStateOfType<_MainScreenState>()?.setTab(2);
+              },
+              child: const Text('В профиль'),
+            ),
+          ],
+        ),
+      );
     }
   }
+
+  return anyBonus;
+}
 
   // ----- ИНФОРМАЦИОННОЕ ОКНО МАГАЗИНА -----
   void _showShopInfo(Shop shop) {
@@ -1576,198 +1633,711 @@ List<Shop> _getVisibleShops() {
   List<Shop> visibleShops = _getVisibleShops();
 
   return Column(
-    children: [
-      // Поиск
-      Padding(
-        padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
-        child: TextField(
-          controller: _mapSearchController,
-          decoration: InputDecoration(
-            hintText: 'Поиск магазина',
-            prefixIcon: const Icon(Icons.search, color: AppColors.textSecondary),
-            suffixIcon: _searchQuery.isNotEmpty
-                ? IconButton(
-                    icon: const Icon(Icons.clear, color: AppColors.textSecondary),
-                    onPressed: () {
-                      _mapSearchController.clear();
-                      setState(() => _searchQuery = '');
-                    },
-                  )
-                : null,
-          ),
-          onChanged: (val) => setState(() => _searchQuery = val),
-        ),
-      ),
-      const SizedBox(height: AppSpacing.sm),
+  children: [
+    // ============================================================
+    // ПОИСК
+    // ============================================================
 
-      // Категории-чипы
-      if (categories.isNotEmpty)
-        SizedBox(
-          height: 40,
-          child: ListView(
-            scrollDirection: Axis.horizontal,
-            padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
-            children: [
-              Padding(
+    Padding(
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppSpacing.md,
+      ),
+      child: TextField(
+        controller: _mapSearchController,
+        decoration: InputDecoration(
+          hintText: 'Поиск магазина',
+          prefixIcon: const Icon(
+            Icons.search,
+            color: AppColors.textSecondary,
+          ),
+          suffixIcon: _searchQuery.isNotEmpty
+              ? IconButton(
+                  icon: const Icon(
+                    Icons.clear,
+                    color: AppColors.textSecondary,
+                  ),
+                  onPressed: () {
+                    _mapSearchController.clear();
+                    setState(() => _searchQuery = '');
+                  },
+                )
+              : null,
+        ),
+        onChanged: (val) {
+          setState(() => _searchQuery = val);
+        },
+      ),
+    ),
+
+    const SizedBox(height: AppSpacing.sm),
+
+    // ============================================================
+    // КАТЕГОРИИ
+    // ============================================================
+
+    if (categories.isNotEmpty)
+      SizedBox(
+        height: 40,
+        child: ListView(
+          scrollDirection: Axis.horizontal,
+          padding: const EdgeInsets.symmetric(
+            horizontal: AppSpacing.md,
+          ),
+          children: [
+            Padding(
+              padding: const EdgeInsets.only(right: 8),
+              child: CategoryChip(
+                label: 'Все',
+                selected: _selectedCategory == null,
+                onTap: () {
+                  setState(() {
+                    _selectedCategory = null;
+                  });
+                },
+              ),
+            ),
+
+            ...categories.map(
+              (cat) => Padding(
                 padding: const EdgeInsets.only(right: 8),
                 child: CategoryChip(
-                  label: 'Все',
-                  selected: _selectedCategory == null,
-                  onTap: () => setState(() => _selectedCategory = null),
+                  label: cat,
+                  selected: _selectedCategory == cat,
+                  onTap: () {
+                    setState(() {
+                      _selectedCategory = cat;
+                    });
+                  },
                 ),
               ),
-              ...categories.map((cat) => Padding(
-                    padding: const EdgeInsets.only(right: 8),
-                    child: CategoryChip(
-                      label: cat,
-                      selected: _selectedCategory == cat,
-                      onTap: () => setState(() => _selectedCategory = cat),
-                    ),
-                  )),
-            ],
-          ),
-        ),
-      const SizedBox(height: AppSpacing.sm),
-
-      // Карта: занимает почти всю ширину, высота автоматическая
-      Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 8),
-        child: AspectRatio(
-          aspectRatio: 2700 / 1536,
-          child: Container(
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(AppRadius.xl),
-              border: Border.all(color: AppColors.border),
             ),
-            clipBehavior: Clip.antiAlias,
-            child: LayoutBuilder(
-              builder: (context, constraints) {
-                return Stack(
+          ],
+        ),
+      ),
+
+    const SizedBox(height: AppSpacing.sm),
+
+    // ============================================================
+    // ИНТЕРАКТИВНАЯ КАРТА
+    // ============================================================
+
+    Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 8),
+      child: LayoutBuilder(
+        builder: (context, viewportConstraints) {
+          // --------------------------------------------------------
+          // Исходный размер изображения
+          // --------------------------------------------------------
+
+          const double imageWidth = 2700;
+          const double imageHeight = 1536;
+
+          // Максимальная ширина карты на PC.
+          // На телефоне карта займёт всю доступную ширину.
+          const double maxMapWidth = 1000;
+
+          final double mapWidth = math.min(
+            viewportConstraints.maxWidth,
+            maxMapWidth,
+          );
+
+          // Сохраняем пропорции оригинальной карты.
+          final double mapHeight =
+              mapWidth * imageHeight / imageWidth;
+
+          // --------------------------------------------------------
+          // Размер изображения внутри InteractiveViewer
+          // --------------------------------------------------------
+
+          final double containScale = math.min(
+            mapWidth / imageWidth,
+            mapHeight / imageHeight,
+          );
+
+          final double renderedWidth =
+              imageWidth * containScale;
+
+          final double renderedHeight =
+              imageHeight * containScale;
+
+          return Center(
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(
+                AppRadius.xl,
+              ),
+              child: Container(
+                width: mapWidth,
+                height: mapHeight,
+                decoration: BoxDecoration(
+                  color: AppColors.surfaceVariant,
+                  border: Border.all(
+                    color: AppColors.border,
+                  ),
+                ),
+                child: Stack(
                   children: [
-                    Container(color: AppColors.surfaceVariant),
-                    Image.asset(
-                      'assets/images/mall_map.png',
-                      width: constraints.maxWidth,
-                      height: constraints.maxHeight,
-                      fit: BoxFit.fill,
-                    ),
-                    ...visibleShops.where((s) => s.mapX != null && s.mapY != null).map((shop) {
-                      final bool isHovered = _hoveredShopId == shop.id;
-                      final bool isRouteTarget = (_selectedRouteShop?.id == shop.id);
-                      if (shop.mapWidth == null ||
-                          shop.mapHeight == null ||
-                          shop.mapWidth! <= 0 ||
-                          shop.mapHeight! <= 0) {
-                        return const SizedBox.shrink();
-                      }
+                    // ==================================================
+                    // INTERACTIVE VIEWER
+                    // ==================================================
 
-                      final double x = shop.mapX! * constraints.maxWidth;
-                      final double y = shop.mapY! * constraints.maxHeight;
-                      final double w = shop.mapWidth! * constraints.maxWidth;
-                      final double h = shop.mapHeight! * constraints.maxHeight;
+                    Positioned.fill(
+                      child: Listener(
+                        onPointerSignal: (event) {
+                          if (event is PointerScrollEvent) {
+                            final double delta =
+                                event.scrollDelta.dy;
 
-                      return Positioned(
-                        left: x - w / 2,
-                        top: y - h / 2,
-                        width: w,
-                        height: h,
-                        child: GestureDetector(
-                          onTap: () {
+                            final double currentScale =
+                                _mapTransformationController
+                                    .value
+                                    .getMaxScaleOnAxis();
+
+                            double newScale;
+
+                            if (delta < 0) {
+                              // Колесо вверх — приближение
+                              newScale =
+                                  currentScale * 1.15;
+                            } else {
+                              // Колесо вниз — отдаление
+                              newScale =
+                                  currentScale / 1.15;
+                            }
+
+                            newScale = newScale.clamp(
+                              1.0,
+                              4.0,
+                            );
+
+                            final Offset focalPoint =
+                                event.localPosition;
+
+                            final Matrix4 currentMatrix =
+                                _mapTransformationController
+                                    .value;
+
+                            final double scale =
+                                currentMatrix
+                                    .getMaxScaleOnAxis();
+
+                            final Offset translation =
+                                Offset(
+                              currentMatrix.storage[12],
+                              currentMatrix.storage[13],
+                            );
+
+                            final Offset focalInContent =
+                                (focalPoint - translation) /
+                                    scale;
+
+                            final double newTranslationX =
+                                focalPoint.dx -
+                                    focalInContent.dx *
+                                        newScale;
+
+                            final double newTranslationY =
+                                focalPoint.dy -
+                                    focalInContent.dy *
+                                        newScale;
+
+                            final Matrix4 newMatrix =
+                                Matrix4.identity()
+                                  ..translate(
+                                    newTranslationX,
+                                    newTranslationY,
+                                  )
+                                  ..scale(newScale);
+
+                            _mapTransformationController
+                                .value = newMatrix;
+
                             setState(() {
-                              _selectedRouteShop = shop;
-                              _hoveredShopId = shop.id;
+                              _mapScale = newScale;
                             });
-                          },
-                          child: MouseRegion(
-                            onEnter: (_) => setState(() => _hoveredShopId = shop.id),
-                            onExit: (_) => setState(() => _hoveredShopId = null),
-                            child: AnimatedContainer(
-                              duration: const Duration(milliseconds: 200),
-                              decoration: BoxDecoration(
-                                color: (isHovered || isRouteTarget)
-                                    ? AppColors.primary.withOpacity(0.35)
-                                    : Colors.transparent,
-                                border: Border.all(
-                                  color: isRouteTarget
-                                      ? AppColors.accent
-                                      : (isHovered ? AppColors.primary : Colors.transparent),
-                                  width: 2,
+                          }
+                        },
+
+                        child: InteractiveViewer(
+                          transformationController:
+                              _mapTransformationController,
+
+                          // Перемещение
+                          panEnabled: true,
+
+                          // Pinch zoom
+                          scaleEnabled: true,
+
+                          // Минимальный масштаб
+                          minScale: 1.0,
+
+                          // Максимальный zoom
+                          maxScale: 4.0,
+
+                          // Позволяем двигать карту
+                          // за пределы области просмотра.
+                          boundaryMargin:
+                              const EdgeInsets.all(300),
+
+                          clipBehavior: Clip.hardEdge,
+
+                          panAxis: PanAxis.free,
+
+                          child: SizedBox(
+                            width: renderedWidth,
+                            height: renderedHeight,
+                            child: Stack(
+                              clipBehavior: Clip.none,
+                              children: [
+                                // ========================================
+                                // КАРТА
+                                // ========================================
+
+                                Positioned.fill(
+                                  child: Image.asset(
+                                    'assets/images/mall_map.png',
+                                    fit: BoxFit.fill,
+                                  ),
                                 ),
-                                borderRadius: BorderRadius.circular(2),
-                              ),
+
+                                // ========================================
+                                // МАГАЗИНЫ
+                                // ========================================
+
+                                ...visibleShops
+                                    .where(
+                                      (s) =>
+                                          s.mapX != null &&
+                                          s.mapY != null &&
+                                          s.mapWidth != null &&
+                                          s.mapHeight != null &&
+                                          s.mapWidth! > 0 &&
+                                          s.mapHeight! > 0,
+                                    )
+                                    .map((shop) {
+                                  final bool isHovered =
+                                      _hoveredShopId ==
+                                          shop.id;
+
+                                  final bool isRouteTarget =
+                                      _selectedRouteShop?.id ==
+                                          shop.id;
+
+                                  // Координаты относительно
+                                  // РЕАЛЬНОГО размера карты.
+                                  final double x =
+                                      shop.mapX! *
+                                          renderedWidth;
+
+                                  final double y =
+                                      shop.mapY! *
+                                          renderedHeight;
+
+                                  final double w =
+                                      shop.mapWidth! *
+                                          renderedWidth;
+
+                                  final double h =
+                                      shop.mapHeight! *
+                                          renderedHeight;
+
+                                  return Positioned(
+                                    left: x - w / 2,
+                                    top: y - h / 2,
+                                    width: w,
+                                    height: h,
+                                    child: GestureDetector(
+                                      onTap: () {
+                                        setState(() {
+                                          _selectedRouteShop =
+                                              shop;
+
+                                          _hoveredShopId =
+                                              shop.id;
+                                        });
+                                      },
+                                      child: MouseRegion(
+                                        onEnter: (_) {
+                                          setState(() {
+                                            _hoveredShopId =
+                                                shop.id;
+                                          });
+                                        },
+                                        onExit: (_) {
+                                          setState(() {
+                                            _hoveredShopId =
+                                                null;
+                                          });
+                                        },
+                                        child:
+                                            AnimatedContainer(
+                                          duration:
+                                              const Duration(
+                                            milliseconds: 200,
+                                          ),
+                                          decoration:
+                                              BoxDecoration(
+                                            color:
+                                                (isHovered ||
+                                                        isRouteTarget)
+                                                    ? AppColors
+                                                        .primary
+                                                        .withOpacity(
+                                                        0.35,
+                                                      )
+                                                    : Colors
+                                                        .transparent,
+                                            border:
+                                                Border.all(
+                                              color:
+                                                  isRouteTarget
+                                                      ? AppColors
+                                                          .accent
+                                                      : isHovered
+                                                          ? AppColors
+                                                              .primary
+                                                          : Colors
+                                                              .transparent,
+                                              width: 2,
+                                            ),
+                                            borderRadius:
+                                                BorderRadius
+                                                    .circular(
+                                              2,
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  );
+                                }),
+
+                                // ========================================
+                                // МАРШРУТ
+                                // ========================================
+
+                                if (_selectedRouteShop !=
+                                        null &&
+                                    _selectedRouteShop!.mapX !=
+                                        null &&
+                                    _selectedRouteShop!.mapY !=
+                                        null)
+                                  Positioned.fill(
+                                    child: CustomPaint(
+                                      painter: _RoutePainter(
+                                        from: Offset(
+                                          _entrancePosition.dx *
+                                              renderedWidth,
+                                          _entrancePosition.dy *
+                                              renderedHeight,
+                                        ),
+                                        to: Offset(
+                                          _selectedRouteShop!
+                                                  .mapX! *
+                                              renderedWidth,
+                                          _selectedRouteShop!
+                                                  .mapY! *
+                                              renderedHeight,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                              ],
                             ),
                           ),
                         ),
-                      );
-                    }).toList(),
-                    if (_selectedRouteShop != null)
-                      CustomPaint(
-                        size: Size(constraints.maxWidth, constraints.maxHeight),
-                        painter: _RoutePainter(
-                          from: Offset(
-                            _entrancePosition.dx * constraints.maxWidth,
-                            _entrancePosition.dy * constraints.maxHeight,
-                          ),
-                          to: Offset(
-                            _selectedRouteShop!.mapX! * constraints.maxWidth,
-                            _selectedRouteShop!.mapY! * constraints.maxHeight,
-                          ),
-                        ),
                       ),
+                    ),
+
+                    // ==================================================
+                    // КНОПКИ ZOOM
+                    // ==================================================
+
+                    Positioned(
+                      right: 12,
+                      bottom: 12,
+                      child: Column(
+                        children: [
+                          // PLUS
+                          Material(
+                            elevation: 3,
+                            borderRadius:
+                                BorderRadius.circular(10),
+                            color: Colors.white,
+                            child: InkWell(
+                              borderRadius:
+                                  BorderRadius.circular(10),
+                              onTap: () {
+                                final double currentScale =
+                                    _mapTransformationController
+                                        .value
+                                        .getMaxScaleOnAxis();
+
+                                final double newScale =
+                                    (currentScale * 1.25)
+                                        .clamp(1.0, 4.0);
+
+                                final double centerX =
+                                    mapWidth / 2;
+
+                                final double centerY =
+                                    mapHeight / 2;
+
+                                final Matrix4 matrix =
+                                    _mapTransformationController
+                                        .value;
+
+                                final double oldScale =
+                                    matrix
+                                        .getMaxScaleOnAxis();
+
+                                final Offset translation =
+                                    Offset(
+                                  matrix.storage[12],
+                                  matrix.storage[13],
+                                );
+
+                                final Offset focal =
+                                    Offset(
+                                  centerX,
+                                  centerY,
+                                );
+
+                                final Offset contentPoint =
+                                    (focal - translation) /
+                                        oldScale;
+
+                                final double tx =
+                                    focal.dx -
+                                        contentPoint.dx *
+                                            newScale;
+
+                                final double ty =
+                                    focal.dy -
+                                        contentPoint.dy *
+                                            newScale;
+
+                                _mapTransformationController
+                                    .value =
+                                    Matrix4.identity()
+                                      ..translate(tx, ty)
+                                      ..scale(newScale);
+
+                                setState(() {
+                                  _mapScale =
+                                      newScale;
+                                });
+                              },
+                              child: const SizedBox(
+                                width: 42,
+                                height: 42,
+                                child: Icon(
+                                  Icons.add,
+                                  size: 22,
+                                ),
+                              ),
+                            ),
+                          ),
+
+                          const SizedBox(height: 6),
+
+                          // MINUS
+                          Material(
+                            elevation: 3,
+                            borderRadius:
+                                BorderRadius.circular(10),
+                            color: Colors.white,
+                            child: InkWell(
+                              borderRadius:
+                                  BorderRadius.circular(10),
+                              onTap: () {
+                                final double currentScale =
+                                    _mapTransformationController
+                                        .value
+                                        .getMaxScaleOnAxis();
+
+                                final double newScale =
+                                    (currentScale / 1.25)
+                                        .clamp(1.0, 4.0);
+
+                                if (newScale == 1.0) {
+                                  _resetMapZoom();
+                                  return;
+                                }
+
+                                final Matrix4 matrix =
+                                    _mapTransformationController
+                                        .value;
+
+                                final double oldScale =
+                                    matrix
+                                        .getMaxScaleOnAxis();
+
+                                final Offset translation =
+                                    Offset(
+                                  matrix.storage[12],
+                                  matrix.storage[13],
+                                );
+
+                                final Offset focal =
+                                    Offset(
+                                  mapWidth / 2,
+                                  mapHeight / 2,
+                                );
+
+                                final Offset contentPoint =
+                                    (focal - translation) /
+                                        oldScale;
+
+                                final double tx =
+                                    focal.dx -
+                                        contentPoint.dx *
+                                            newScale;
+
+                                final double ty =
+                                    focal.dy -
+                                        contentPoint.dy *
+                                            newScale;
+
+                                _mapTransformationController
+                                    .value =
+                                    Matrix4.identity()
+                                      ..translate(tx, ty)
+                                      ..scale(newScale);
+
+                                setState(() {
+                                  _mapScale =
+                                      newScale;
+                                });
+                              },
+                              child: const SizedBox(
+                                width: 42,
+                                height: 42,
+                                child: Icon(
+                                  Icons.remove,
+                                  size: 22,
+                                ),
+                              ),
+                            ),
+                          ),
+
+                          const SizedBox(height: 6),
+
+                          // RESET
+                          Material(
+                            elevation: 3,
+                            borderRadius:
+                                BorderRadius.circular(10),
+                            color: Colors.white,
+                            child: InkWell(
+                              borderRadius:
+                                  BorderRadius.circular(10),
+                              onTap: _resetMapZoom,
+                              child: const SizedBox(
+                                width: 42,
+                                height: 42,
+                                child: Icon(
+                                  Icons.refresh,
+                                  size: 20,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
                   ],
-                );
-              },
+                ),
+              ),
             ),
+          );
+        },
+      ),
+    ),
+
+    // ============================================================
+    // КНОПКА СБРОСА МАРШРУТА
+    // ============================================================
+
+    if (_selectedRouteShop != null)
+      Padding(
+        padding: const EdgeInsets.only(top: 4),
+        child: TextButton.icon(
+          icon: const Icon(
+            Icons.close,
+            size: 16,
           ),
+          label: Text(
+            'Сбросить маршрут до '
+            '${_selectedRouteShop!.name}',
+          ),
+          onPressed: () {
+            setState(() {
+              _selectedRouteShop = null;
+              _hoveredShopId = null;
+            });
+          },
         ),
       ),
 
-      // Кнопка сброса маршрута
-      if (_selectedRouteShop != null)
-        Padding(
-          padding: const EdgeInsets.only(top: 4),
-          child: TextButton.icon(
-            icon: const Icon(Icons.close, size: 16),
-            label: Text('Сбросить маршрут до ${_selectedRouteShop!.name}'),
-            onPressed: () => setState(() {
-              _selectedRouteShop = null;
-              _hoveredShopId = null;
-            }),
-          ),
-        ),
+    // ============================================================
+    // ИНФОРМАЦИЯ О ВЫБРАННОМ МАГАЗИНЕ
+    // ============================================================
 
-      // Информация о выбранном магазине
-      if (_selectedRouteShop != null)
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md, vertical: AppSpacing.sm),
-          child: AppCard(
-            color: AppColors.accentContainer,
-            child: Row(
-              children: [
-                Text(_selectedRouteShop!.icon, style: const TextStyle(fontSize: 32)),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(_selectedRouteShop!.name, style: AppTextStyles.title),
-                      Text(_selectedRouteShop!.discount, style: AppTextStyles.bodyMedium),
-                    ],
-                  ),
+    if (_selectedRouteShop != null)
+      Padding(
+        padding: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.md,
+          vertical: AppSpacing.sm,
+        ),
+        child: AppCard(
+          color: AppColors.accentContainer,
+          child: Row(
+            children: [
+              Text(
+                _selectedRouteShop!.icon,
+                style: const TextStyle(
+                  fontSize: 32,
                 ),
-                ElevatedButton(
-                  onPressed: () => _activateShop(_selectedRouteShop!),
-                  style: ElevatedButton.styleFrom(backgroundColor: AppColors.accent),
-                  child: const Text('В путь'),
+              ),
+
+              const SizedBox(width: 12),
+
+              Expanded(
+                child: Column(
+                  crossAxisAlignment:
+                      CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      _selectedRouteShop!.name,
+                      style: AppTextStyles.title,
+                    ),
+                    Text(
+                      _selectedRouteShop!.discount,
+                      style: AppTextStyles.bodyMedium,
+                    ),
+                  ],
                 ),
-              ],
-            ),
+              ),
+
+              ElevatedButton(
+                onPressed: () {
+                  _activateShop(
+                    _selectedRouteShop!,
+                  );
+                },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor:
+                      AppColors.accent,
+                ),
+                child: const Text('В путь'),
+              ),
+            ],
           ),
         ),
-    ],
-  );
+      ),
+  ],
+);
 }
-
   // ----- ОСТАЛЬНЫЕ МЕТОДЫ КВЕСТА -----
   Future<void> _showLocationPicker({bool isChanging = false}) async {
     final Map<String, List<Map<String, String>>> citiesAndMalls = {
@@ -2143,9 +2713,9 @@ List<Shop> _getAvailableForFork(Shop? currentShop) {
             children: [
               Text(shop.icon, style: const TextStyle(fontSize: 32)),
               const SizedBox(height: 4),
-              Text(shop.name, style: const TextStyle(fontSize: 14)),
+              Text(shop.name, style: const TextStyle(fontSize: 14, color: AppColors.textPrimary)),
               if (isCollab) const Text('🎁 Спецпредложение!', style: TextStyle(fontSize: 10)),
-              Text(discountText, style: const TextStyle(fontSize: 12)),
+              Text(discountText, style: const TextStyle(fontSize: 12, color: AppColors.success)),
             ],
           ),
         ),
@@ -2273,61 +2843,64 @@ Future<void> _showWheelOfFortune() async {
 }
 
   Future<void> _startNewCycle() async {
-    final newCycleCount = _cycleCount + 1;
+  final newCycleCount = _cycleCount + 1;
+  await _firestore.collection('user_progress').doc(_userId).update({
+    'cycleCount': newCycleCount,
+    'completedSteps': 0,
+    'usedShopIds': [],
+    'pendingForkShops': [],
+    'lastShopId': null,
+    'isPathActive': true,
+  });
+
+  final userDoc = await _firestore.collection('user_progress').doc(_userId).get();
+  final referredBy = userDoc.data()?['referredBy'] as String?;
+  if (referredBy != null) {
+    final referrerBonus = {
+      'title': 'Реферальный бонус',
+      'message': 'Ваш друг завершил первый квест!',
+      'icon': '🎁',
+    };
+    final selfBonus = {
+      'title': 'Бонус за использование кода',
+      'message': 'Вы завершили первый квест по приглашению!',
+      'icon': '🎉',
+    };
+
+    await _firestore.collection('user_progress').doc(referredBy).update({
+      'pendingBonuses': FieldValue.arrayUnion([referrerBonus]),
+    });
     await _firestore.collection('user_progress').doc(_userId).update({
-      'cycleCount': newCycleCount,
-      'completedSteps': 0,
-      'usedShopIds': [],
-      'pendingForkShops': [],
-      'lastShopId': null,
-      'isPathActive': true,
+      'pendingBonuses': FieldValue.arrayUnion([selfBonus]),
+      'referredBy': FieldValue.delete(),
     });
 
-    final userDoc = await _firestore.collection('user_progress').doc(_userId).get();
-    final referredBy = userDoc.data()?['referredBy'] as String?;
-    if (referredBy != null) {
-      final referrerBonus = {
-        'title': 'Реферальный бонус',
-        'message': 'Ваш друг завершил первый квест!',
-        'icon': '🎁',
-      };
-      final selfBonus = {
-        'title': 'Бонус за использование кода',
-        'message': 'Вы завершили первый квест по приглашению!',
-        'icon': '🎉',
-      };
-
-      await _firestore.collection('user_progress').doc(referredBy).update({
-        'pendingBonuses': FieldValue.arrayUnion([referrerBonus]),
-      });
-      await _firestore.collection('user_progress').doc(_userId).update({
-        'pendingBonuses': FieldValue.arrayUnion([selfBonus]),
-        'referredBy': FieldValue.delete(),
-      });
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Поздравляем! Вы и ваш друг получили бонусы!')),
-        );
-      }
-    }
-
-    setState(() {
-      _completedSteps = 0;
-      _usedShopIds.clear();
-      _cycleCount = newCycleCount;
-      _isPathActive = true;
-      _pendingForkShops = null;
-      _lastShop = null;
-      _lastShopId = null;
-    });
-    await _updateTaskProgress('complete_quest');
-    if (!mounted) return;
-    await _checkBonuses('cycle_completed');
     if (mounted) {
-      await _showWheelOfFortune();
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Поздравляем! Вы и ваш друг получили бонусы!')),
+      );
+    }
   }
+
+  setState(() {
+    _completedSteps = 0;
+    _usedShopIds.clear();
+    _cycleCount = newCycleCount;
+    _isPathActive = true;
+    _pendingForkShops = null;
+    _lastShop = null;
+    _lastShopId = null;
+  });
+
+  await _updateTaskProgress('complete_quest');
+  if (!mounted) return;
+
+  final bool bonusAdded = await _checkBonuses('cycle_completed');
+
+  if (mounted && !bonusAdded) {
+    await _showWheelOfFortune();
   }
+}
 
   Future<bool?> _showQRDialog(Shop shop) async {
     final userDoc = await _firestore.collection('user_progress').doc(_userId).get();
@@ -2675,6 +3248,11 @@ Future<void> _showWheelOfFortune() async {
     );
   }
 
+void _resetMapZoom() {
+  _mapTransformationController.value = Matrix4.identity();
+  setState(() => _mapScale = 1.0);
+}
+
   @override
   Widget build(BuildContext context) {
     if (_isLoading) {
@@ -2792,6 +3370,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
   String? _referralCode;
   String? _referralStatus;
 
+  List<Map<String, dynamic>> _pendingBonuses = [];
+
   @override
   void initState() {
     super.initState();
@@ -2800,7 +3380,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
     _loadSubscribedShops();
     _ensureReferralCode();
     _loadCycleCount();
+    _loadPendingBonuses();
   }
+
+  // ==================== ЗАГРУЗКА ДАННЫХ ====================
 
   Future<void> _loadPushSettings() async {
     final doc = await _firestore.collection('user_progress').doc(_userId).get();
@@ -2841,32 +3424,64 @@ class _ProfileScreenState extends State<ProfileScreen> {
     _loadSubscribedShops();
   }
 
-  Future<List<QueryDocumentSnapshot>> _getPendingBonuses() async {
+  // ==================== БОНУСЫ ====================
+
+  Future<List<Map<String, dynamic>>> _getPendingBonuses() async {
     final userDoc = await _firestore.collection('user_progress').doc(_userId).get();
-    final pendingIds = List<String>.from(userDoc.data()?['pendingBonuses'] ?? []);
-    if (pendingIds.isEmpty) return [];
-    final snapshot = await _firestore
-        .collection('bonus_rules')
-        .where(FieldPath.documentId, whereIn: pendingIds)
-        .get();
-    return snapshot.docs;
+    final data = userDoc.data() ?? {};
+    final pendingRaw = data['pendingBonuses'] ?? [];
+    final List<Map<String, dynamic>> bonuses = [];
+
+    for (final item in pendingRaw) {
+      if (item is String) {
+        final ruleDoc = await _firestore.collection('bonus_rules').doc(item).get();
+        if (ruleDoc.exists) {
+          final ruleData = ruleDoc.data() as Map<String, dynamic>? ?? {};
+          final reward = ruleData['reward'] as Map<String, dynamic>? ?? {};
+          bonuses.add({
+            'type': 'rule',
+            'ruleId': item,
+            'title': reward['title'] ?? 'Бонус',
+            'message': reward['message'] ?? '',
+            'icon': reward['icon'] ?? '🎁',
+            'targetShopId': reward['targetShopId'] ?? '',
+          });
+        }
+      } else if (item is Map) {
+        bonuses.add({
+          'type': 'direct',
+          'ruleId': null,
+          'title': item['title'] ?? 'Бонус',
+          'message': item['message'] ?? '',
+          'icon': item['icon'] ?? '🎁',
+          'targetShopId': item['targetShopId'] ?? '',
+        });
+      }
+    }
+    return bonuses;
   }
 
-  Future<void> _claimBonus(String ruleId, Map<String, dynamic> rewardData) async {
-    final targetShopId = rewardData['targetShopId'] as String? ?? '';
-    final bonusDescription = rewardData['title'] as String? ?? 'Бонус';
-    final message = rewardData['message'] as String? ?? '';
-    final icon = rewardData['icon'] as String? ?? '🎁';
+  Future<void> _loadPendingBonuses() async {
+    final bonuses = await _getPendingBonuses();
+    if (mounted) setState(() => _pendingBonuses = bonuses);
+  }
+
+  Future<void> _claimBonus(Map<String, dynamic> bonus) async {
+    final title = bonus['title'] ?? 'Бонус';
+    final message = bonus['message'] ?? '';
+    final icon = bonus['icon'] ?? '🎁';
+    final targetShopId = bonus['targetShopId'] ?? '';
+    final ruleId = bonus['ruleId'] as String?;
 
     if (targetShopId.isNotEmpty) {
       final shopDoc = await _firestore.collection('shops').doc(targetShopId).get();
       if (shopDoc.exists) {
         final targetShop = Shop.fromFirestore(shopDoc);
-        showDialog(
+        await showDialog(
           context: context,
           barrierDismissible: false,
-          builder: (context) => AlertDialog(
-            title: Text('$icon $bonusDescription'),
+          builder: (ctx) => AlertDialog(
+            title: Text('$icon $title'),
             content: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
@@ -2879,7 +3494,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
             ),
             actions: [
               TextButton(
-                onPressed: () => Navigator.pop(context),
+                onPressed: () => Navigator.pop(ctx),
                 child: const Text('Закрыть'),
               ),
             ],
@@ -2887,10 +3502,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
         );
       }
     } else {
-      showDialog(
+      await showDialog(
         context: context,
         builder: (_) => AlertDialog(
-          title: Text('$icon $bonusDescription'),
+          title: Text('$icon $title'),
           content: Text(message),
           actions: [
             TextButton(
@@ -2902,12 +3517,28 @@ class _ProfileScreenState extends State<ProfileScreen> {
       );
     }
 
-    await _firestore.collection('user_progress').doc(_userId).update({
-      'pendingBonuses': FieldValue.arrayRemove([ruleId]),
-      'claimedBonuses': FieldValue.arrayUnion([ruleId]),
-    });
-    if (mounted) setState(() {});
+    if (ruleId != null) {
+      await _firestore.collection('user_progress').doc(_userId).update({
+        'pendingBonuses': FieldValue.arrayRemove([ruleId]),
+        'claimedBonuses': FieldValue.arrayUnion([ruleId]),
+      });
+    } else {
+      final userDoc = await _firestore.collection('user_progress').doc(_userId).get();
+      final currentPending = List<dynamic>.from(userDoc.data()?['pendingBonuses'] ?? []);
+      currentPending.removeWhere((item) =>
+          item is Map && item['title'] == title && item['message'] == message);
+      await userDoc.reference.update({
+        'pendingBonuses': currentPending,
+        'claimedBonuses': FieldValue.arrayUnion([
+          {'title': title, 'message': message, 'icon': icon}
+        ]),
+      });
+    }
+
+    if (mounted) await _loadPendingBonuses();
   }
+
+  // ==================== РЕФЕРАЛЬНАЯ СИСТЕМА ====================
 
   Future<void> _ensureReferralCode() async {
     final doc = await _firestore.collection('user_progress').doc(_userId).get();
@@ -2933,29 +3564,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
       final charIndex = (random.codeUnitAt(index % random.length) + index) % chars.length;
       return chars[charIndex];
     }).join();
-  }
-
-  Future<void> _loadCycleCount() async {
-    final doc = await _firestore.collection('user_progress').doc(_userId).get();
-    if (doc.exists && mounted) {
-      setState(() {
-        _cycleCount = (doc.data()?['cycleCount'] as num?)?.toInt() ?? 0;
-      });
-    }
-  }
-
-  double _getLevelProgress() {
-    if (_cycleCount >= 7) return 1.0;
-    if (_cycleCount >= 3) return (_cycleCount - 3) / 4;
-    return _cycleCount / 3;
-  }
-
-  String _getLevelProgressText() {
-    final currentLevel = LevelSystem.getCurrentLevel(_cycleCount);
-    if (currentLevel == 3) return 'Максимальный уровень достигнут';
-    final nextCycle = LevelSystem.getNextLevelCycles(_cycleCount);
-    final cyclesRemaining = nextCycle - _cycleCount;
-    return 'Осталось циклов до следующего уровня: $cyclesRemaining';
   }
 
   Future<void> _showEnterReferralDialog() async {
@@ -3015,6 +3623,33 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
+  // ==================== УРОВНИ ====================
+
+  Future<void> _loadCycleCount() async {
+    final doc = await _firestore.collection('user_progress').doc(_userId).get();
+    if (doc.exists && mounted) {
+      setState(() {
+        _cycleCount = (doc.data()?['cycleCount'] as num?)?.toInt() ?? 0;
+      });
+    }
+  }
+
+  double _getLevelProgress() {
+    if (_cycleCount >= 7) return 1.0;
+    if (_cycleCount >= 3) return (_cycleCount - 3) / 4;
+    return _cycleCount / 3;
+  }
+
+  String _getLevelProgressText() {
+    final currentLevel = LevelSystem.getCurrentLevel(_cycleCount);
+    if (currentLevel == 3) return 'Максимальный уровень достигнут';
+    final nextCycle = LevelSystem.getNextLevelCycles(_cycleCount);
+    final cyclesRemaining = nextCycle - _cycleCount;
+    return 'Осталось циклов до следующего уровня: $cyclesRemaining';
+  }
+
+  // ==================== UI ====================
+
   @override
   Widget build(BuildContext context) {
     final user = FirebaseAuth.instance.currentUser;
@@ -3023,6 +3658,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
       body: ListView(
         padding: const EdgeInsets.all(AppSpacing.md),
         children: [
+          // ---- Карточка профиля ----
           AppCard(
             child: Column(
               children: [
@@ -3074,10 +3710,16 @@ class _ProfileScreenState extends State<ProfileScreen> {
           ),
           const SizedBox(height: AppSpacing.md),
 
-          FutureBuilder<DocumentSnapshot>(
-            future: _firestore.collection('user_progress').doc(_userId).get(),
+          // ---- Монеты и ежедневные задания (StreamBuilder) ----
+          StreamBuilder<DocumentSnapshot>(
+            stream: _firestore.collection('user_progress').doc(_userId).snapshots(),
             builder: (context, snapshot) {
-              if (!snapshot.hasData) return const SizedBox.shrink();
+              if (snapshot.connectionState == ConnectionState.waiting) {
+                return const Center(child: CircularProgressIndicator());
+              }
+              if (!snapshot.hasData || snapshot.data == null) {
+                return const SizedBox.shrink();
+              }
               final data = snapshot.data!.data() as Map<String, dynamic>? ?? {};
               final coins = data['coins'] as int? ?? 0;
               final tasks = List<Map<String, dynamic>>.from(data['dailyTasks'] ?? []);
@@ -3091,11 +3733,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
                         CoinBadge(amount: coins),
                         const Spacer(),
                         TextButton(
-                          onPressed: () {
-                            Navigator.push(
+                          onPressed: () async {
+                            await Navigator.push(
                               context,
                               MaterialPageRoute(builder: (_) => const RewardShopScreen()),
                             );
+                            if (mounted) await _loadPendingBonuses();
                           },
                           child: const Text('Магазин наград'),
                         ),
@@ -3130,6 +3773,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
           ),
           const SizedBox(height: AppSpacing.md),
 
+          // ---- Пригласи друга ----
           AppCard(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -3184,53 +3828,40 @@ class _ProfileScreenState extends State<ProfileScreen> {
           ),
           const SizedBox(height: AppSpacing.md),
 
-          FutureBuilder<List<QueryDocumentSnapshot>>(
-            future: _getPendingBonuses(),
-            builder: (context, snapshot) {
-              if (snapshot.connectionState == ConnectionState.waiting) {
-                return const Center(child: CircularProgressIndicator());
-              }
-              final bonuses = snapshot.data ?? [];
-              if (bonuses.isEmpty) {
-                return AppCard(
-                  child: EmptyState(
+          // ---- Мои бонусы ----
+          AppCard(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                SectionTitle(title: 'Мои бонусы', padding: EdgeInsets.zero),
+                if (_pendingBonuses.isEmpty)
+                  EmptyState(
                     icon: Icons.card_giftcard,
                     title: 'У вас пока нет доступных бонусов.',
-                  ),
-                );
-              }
-              return AppCard(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    SectionTitle(title: 'Мои бонусы', padding: EdgeInsets.zero),
-                    ...bonuses.map((rule) {
-                      final data = rule.data() as Map<String, dynamic>;
-                      final reward = data['reward'] as Map<String, dynamic>? ?? {};
-                      final title = reward['title'] ?? 'Бонус';
-                      final icon = reward['icon'] ?? '🎁';
-                      return ListTile(
-                        contentPadding: EdgeInsets.zero,
-                        leading: Text(icon, style: const TextStyle(fontSize: 32)),
-                        title: Text(title),
-                        trailing: ElevatedButton(
-                          onPressed: () => _claimBonus(rule.id, reward),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: AppColors.primary,
-                            foregroundColor: Colors.white,
-                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                          ),
-                          child: const Text('Получить'),
+                  )
+                else
+                  ..._pendingBonuses.map((bonus) {
+                    return ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: Text(bonus['icon'] ?? '🎁', style: const TextStyle(fontSize: 32)),
+                      title: Text(bonus['title'] ?? 'Бонус'),
+                      trailing: ElevatedButton(
+                        onPressed: () => _claimBonus(bonus),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: AppColors.primary,
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                         ),
-                      );
-                    }),
-                  ],
-                ),
-              );
-            },
+                        child: const Text('Получить'),
+                      ),
+                    );
+                  }),
+              ],
+            ),
           ),
           const SizedBox(height: AppSpacing.md),
 
+          // ---- Настройки уведомлений ----
           AppCard(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -3269,6 +3900,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
           ),
           const SizedBox(height: AppSpacing.md),
 
+          // ---- FAQ ----
           FutureBuilder<String>(
             future: ContentService.getContent('faq', defaultValue: 'Здесь скоро появятся часто задаваемые вопросы.'),
             builder: (context, snapshot) {
