@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:intl/intl.dart';
+import 'package:supabase_flutter/supabase_flutter.dart' as supa;
 
 class QuestHistoryScreen extends StatefulWidget {
   const QuestHistoryScreen({super.key});
@@ -11,139 +10,160 @@ class QuestHistoryScreen extends StatefulWidget {
 }
 
 class _QuestHistoryScreenState extends State<QuestHistoryScreen> {
-  final _firestore = FirebaseFirestore.instance;
   late final String _userId;
 
-  // Данные для экрана
-  List<Map<String, dynamic>> _allShops = [];       // все магазины ТЦ
-  Set<String> _visitedShopIds = {};                // посещённые за всё время
+  List<Map<String, dynamic>> _allShops = [];
+  Set<String> _visitedShopIds = {};
   List<Map<String, dynamic>> _cycles = [];
   List<Map<String, dynamic>> _bonuses = [];
   Map<String, bool> _achievements = {};
   bool _allShopsBonusClaimed = false;
   bool _loading = true;
 
+  supa.SupabaseClient get _sb => supa.Supabase.instance.client;
+
   @override
   void initState() {
     super.initState();
-    _userId = FirebaseAuth.instance.currentUser!.uid;
+    _userId = supa.Supabase.instance.client.auth.currentUser!.id;
     _loadData();
   }
 
   Future<void> _loadData() async {
     setState(() => _loading = true);
 
-    // 1. Получаем данные пользователя
-    final userDoc = await _firestore.collection('user_progress').doc(_userId).get();
-    final userData = userDoc.data() ?? {};
-    final selectedMallId = userData['selectedMallId'] as String? ?? '';
-    _allShopsBonusClaimed = userData['allShopsBonusClaimed'] == true;
+    try {
+      // 1. Данные пользователя
+      final userData = await _sb
+          .from('user_progress')
+          .select()
+          .eq('user_id', _userId)
+          .maybeSingle();
 
-    // 2. Загружаем все магазины выбранного ТЦ
-    if (selectedMallId.isNotEmpty) {
-      final shopsSnap = await _firestore
-          .collection('shops')
-          .where('mallId', isEqualTo: selectedMallId)
-          .get();
-      _allShops = shopsSnap.docs.map((doc) {
+      if (userData == null) {
+        if (mounted) setState(() => _loading = false);
+        return;
+      }
+
+      final selectedMallId = userData['selected_mall_id'] as String? ?? '';
+      _allShopsBonusClaimed = userData['all_shops_bonus_claimed'] == true;
+
+      // 2. Магазины выбранного ТЦ
+      if (selectedMallId.isNotEmpty) {
+        final shopsData = await _sb
+            .from('shops')
+            .select('firestore_id, name, icon')
+            .eq('mall_id', selectedMallId);
+
+        _allShops = (shopsData as List).map((json) {
+          final m = Map<String, dynamic>.from(json);
+          return {
+            'id': m['firestore_id'] ?? '',
+            'name': m['name'] ?? m['firestore_id'] ?? '',
+            'icon': m['icon'] ?? '🛍️',
+          };
+        }).toList();
+      }
+
+      // 3. Посещённые магазины
+      final allVisited = (userData['all_visited_shop_ids'] as List<dynamic>? ?? [])
+          .map((e) => e.toString())
+          .toSet();
+
+      final salesData = await _sb
+          .from('sales')
+          .select('shop_id, step, created_at')
+          .eq('user_id', _userId)
+          .order('created_at', ascending: true);
+
+      final salesList = (salesData as List).map((json) {
+        final m = Map<String, dynamic>.from(json);
         return {
-          'id': doc.id,
-          'name': (doc.data()['name'] ?? doc.id) as String,
-          'icon': (doc.data()['icon'] ?? '🛍️') as String,
+          'shopId': m['shop_id'] as String? ?? '',
+          'step': (m['step'] as num?)?.toInt() ?? 0,
+          'timestamp': m['created_at'] != null
+              ? DateTime.tryParse(m['created_at'].toString()) ?? DateTime.now()
+              : DateTime.now(),
         };
       }).toList();
-    }
 
-    // 3. Собираем посещённые магазины из allVisitedShopIds и sales
-    final allVisited = (userData['allVisitedShopIds'] as List<dynamic>? ?? [])
-        .map((e) => e.toString())
-        .toSet();
+      final salesShopIds = salesList
+          .map((s) => s['shopId'] as String)
+          .where((id) => id.isNotEmpty)
+          .toSet();
 
-    final salesSnap = await _firestore
-        .collection('sales')
-        .where('userId', isEqualTo: _userId)
-        .get();
-    final salesShopIds = salesSnap.docs
-        .map((doc) => (doc.data()['shopId'] as String? ?? ''))
-        .where((id) => id.isNotEmpty)
-        .toSet();
+      _visitedShopIds = {...allVisited, ...salesShopIds};
 
-    _visitedShopIds = {...allVisited, ...salesShopIds};
-
-    // 4. Формируем историю циклов (как раньше)
-    final salesList = salesSnap.docs.map((doc) {
-      final data = doc.data();
-      return {
-        'shopId': data['shopId'] as String? ?? '',
-        'step': data['step'] as int? ?? 0,
-        'timestamp': (data['timestamp'] as Timestamp).toDate(),
-      };
-    }).toList();
-
-    // Названия магазинов
-    final shopNames = <String, String>{};
-    for (final s in _allShops) {
-      shopNames[s['id']] = s['name'];
-    }
-
-    // Группировка по циклам
-    final List<List<Map<String, dynamic>>> cyclesList = [];
-    List<Map<String, dynamic>> currentCycle = [];
-    for (final sale in salesList) {
-      if (sale['step'] == 1 && currentCycle.isNotEmpty) {
-        cyclesList.add(List.from(currentCycle));
-        currentCycle = [];
+      // 4. Группировка по циклам
+      final shopNames = <String, String>{};
+      for (final s in _allShops) {
+        shopNames[s['id'] as String] = s['name'] as String;
       }
-      currentCycle.add(sale);
-    }
-    if (currentCycle.isNotEmpty) cyclesList.add(currentCycle);
 
-    final cyclesData = <Map<String, dynamic>>[];
-    for (int i = 0; i < cyclesList.length; i++) {
-      final cycle = cyclesList[i];
-      final startDate = cycle.first['timestamp'] as DateTime;
-      final endDate = cycle.last['timestamp'] as DateTime;
-      final shops = cycle
-          .map((s) => shopNames[s['shopId']] ?? s['shopId'])
-          .toList();
-      cyclesData.add({
-        'index': i + 1,
-        'startDate': startDate,
-        'endDate': endDate,
-        'shops': shops,
-      });
-    }
+      final List<List<Map<String, dynamic>>> cyclesList = [];
+      List<Map<String, dynamic>> currentCycle = [];
+      for (final sale in salesList) {
+        if (sale['step'] == 1 && currentCycle.isNotEmpty) {
+          cyclesList.add(List.from(currentCycle));
+          currentCycle = [];
+        }
+        currentCycle.add(sale);
+      }
+      if (currentCycle.isNotEmpty) cyclesList.add(currentCycle);
 
-    // Бонусы
-    final pendingBonuses = (userData['pendingBonuses'] as List<dynamic>?) ?? [];
-    final claimedBonuses = (userData['claimedBonuses'] as List<dynamic>?) ?? [];
-    final allBonuses = <Map<String, dynamic>>[];
-    for (final b in pendingBonuses) {
-      allBonuses.add({
-        'description': b is Map ? (b['title']?.toString() ?? b.toString()) : b.toString(),
-        'status': 'pending',
-      });
-    }
-    for (final b in claimedBonuses) {
-      allBonuses.add({
-        'description': b is Map ? (b['title']?.toString() ?? b.toString()) : b.toString(),
-        'status': 'claimed',
-      });
-    }
+      final cyclesData = <Map<String, dynamic>>[];
+      for (int i = 0; i < cyclesList.length; i++) {
+        final cycle = cyclesList[i];
+        final startDate = cycle.first['timestamp'] as DateTime;
+        final endDate = cycle.last['timestamp'] as DateTime;
+        final shops = cycle
+            .map((s) => shopNames[s['shopId']] ?? s['shopId'])
+            .toList();
+        cyclesData.add({
+          'index': i + 1,
+          'startDate': startDate,
+          'endDate': endDate,
+          'shops': shops,
+        });
+      }
 
-    // Ачивки
-    final achievements = <String, bool>{};
-    achievements['Первый цикл'] = cyclesList.length >= 1;
-    achievements['5 циклов'] = cyclesList.length >= 5;
-    achievements['10 циклов'] = cyclesList.length >= 10;
-    achievements['Все магазины ТЦ'] = _allShops.isNotEmpty && _visitedShopIds.containsAll(_allShops.map((s) => s['id']));
+      // 5. Бонусы
+      final pendingBonuses = (userData['pending_bonuses'] as List<dynamic>?) ?? [];
+      final claimedBonuses = (userData['claimed_bonuses'] as List<dynamic>?) ?? [];
+      final allBonuses = <Map<String, dynamic>>[];
+      for (final b in pendingBonuses) {
+        allBonuses.add({
+          'description': b is Map ? (b['title']?.toString() ?? b.toString()) : b.toString(),
+          'status': 'pending',
+        });
+      }
+      for (final b in claimedBonuses) {
+        allBonuses.add({
+          'description': b is Map ? (b['title']?.toString() ?? b.toString()) : b.toString(),
+          'status': 'claimed',
+        });
+      }
 
-    setState(() {
-      _cycles = cyclesData;
-      _bonuses = allBonuses;
-      _achievements = achievements;
-      _loading = false;
-    });
+      // 6. Ачивки
+      final achievements = <String, bool>{};
+      achievements['Первый цикл'] = cyclesList.length >= 1;
+      achievements['5 циклов'] = cyclesList.length >= 5;
+      achievements['10 циклов'] = cyclesList.length >= 10;
+      achievements['Все магазины ТЦ'] =
+          _allShops.isNotEmpty && _visitedShopIds.containsAll(_allShops.map((s) => s['id']));
+
+      if (mounted) {
+        setState(() {
+          _cycles = cyclesData;
+          _bonuses = allBonuses;
+          _achievements = achievements;
+          _loading = false;
+        });
+      }
+    } catch (e) {
+      print('❌ _loadData (quest_history): $e');
+      if (mounted) setState(() => _loading = false);
+    }
   }
 
   @override
@@ -279,10 +299,10 @@ class _QuestHistoryScreenState extends State<QuestHistoryScreen> {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: List<String>.from(cycle['shops'] as List)
-    .asMap()
-    .entries
-    .map((entry) => Text('Шаг ${entry.key + 1}: ${entry.value}'))
-    .toList(),
+                              .asMap()
+                              .entries
+                              .map((entry) => Text('Шаг ${entry.key + 1}: ${entry.value}'))
+                              .toList(),
                         ),
                       ),
                     ],

@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:supabase_flutter/supabase_flutter.dart' as supa;
 import 'models.dart';
 
 class MallMapScreen extends StatefulWidget {
@@ -15,6 +15,8 @@ class _MallMapScreenState extends State<MallMapScreen> {
   bool _loading = true;
   String? _error;
 
+  supa.SupabaseClient get _sb => supa.Supabase.instance.client;
+
   @override
   void initState() {
     super.initState();
@@ -23,8 +25,30 @@ class _MallMapScreenState extends State<MallMapScreen> {
 
   Future<void> _loadShops() async {
     try {
-      final snapshot = await FirebaseFirestore.instance.collection('shops').get();
-      final shops = snapshot.docs.map((doc) => Shop.fromFirestore(doc)).toList();
+      // Получаем выбранный ТЦ пользователя
+      final userId = supa.Supabase.instance.client.auth.currentUser?.id;
+      String? mallId;
+
+      if (userId != null) {
+        final data = await _sb
+            .from('user_progress')
+            .select('selected_mall_id')
+            .eq('user_id', userId)
+            .maybeSingle();
+        mallId = data?['selected_mall_id'] as String?;
+      }
+
+      // Читаем магазины: все или только выбранного ТЦ
+      var query = _sb.from('shops').select();
+      if (mallId != null && mallId.isNotEmpty) {
+        query = query.eq('mall_id', mallId);
+      }
+
+      final data = await query;
+      final shops = (data as List)
+          .map((json) => Shop.fromSupabase(Map<String, dynamic>.from(json)))
+          .toList();
+
       if (mounted) {
         setState(() {
           _shops = shops;
@@ -32,6 +56,7 @@ class _MallMapScreenState extends State<MallMapScreen> {
         });
       }
     } catch (e) {
+      print('❌ _loadShops (mall_map): $e');
       if (mounted) {
         setState(() {
           _error = e.toString();
@@ -53,9 +78,10 @@ class _MallMapScreenState extends State<MallMapScreen> {
             if (shop.discount.isNotEmpty)
               Padding(
                 padding: const EdgeInsets.only(top: 8),
-                child: Text(shop.discount,
-                    style: const TextStyle(
-                        fontWeight: FontWeight.bold, color: Colors.green)),
+                child: Text(
+                  shop.discount,
+                  style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.green),
+                ),
               ),
           ],
         ),
@@ -92,7 +118,7 @@ class _MallMapScreenState extends State<MallMapScreen> {
         minScale: 0.5,
         maxScale: 3.0,
         child: ConstrainedBox(
-          constraints: const BoxConstraints(maxHeight: 300),   // ← высота карты
+          constraints: const BoxConstraints(maxHeight: 300),
           child: Center(
             child: AspectRatio(
               aspectRatio: 2700 / 1536,
@@ -123,8 +149,7 @@ class _MallMapScreenState extends State<MallMapScreen> {
                                 border: Border.all(color: Colors.white, width: 2),
                               ),
                               child: Center(
-                                child: Text(shop.icon,
-                                    style: const TextStyle(fontSize: 14)),
+                                child: Text(shop.icon, style: const TextStyle(fontSize: 14)),
                               ),
                             ),
                           ),

@@ -189,6 +189,11 @@ class QuestStepsBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    const double circleSize = 36;
+    const double lineThickness = 2;
+    const double labelWidth = 56; // ширина подписи "Шаг N"
+    const double labelHeight = 16;
+
     return Container(
       padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 12),
       decoration: BoxDecoration(
@@ -197,61 +202,124 @@ class QuestStepsBar extends StatelessWidget {
         border: Border.all(color: AppColors.border),
         boxShadow: AppShadows.card,
       ),
-      child: Row(
-        children: List.generate(totalSteps, (index) {
-          final bool completed = index < completedSteps;
-          final bool current = index == completedSteps && completedSteps < totalSteps;
-          final bool isLast = index == totalSteps - 1;
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final double totalWidth = constraints.maxWidth;
 
-          return Expanded(
-            child: Row(
+          // Ограничиваем ширину подписи, чтобы она не вылезала за контейнер
+          final double effectiveLabelWidth =
+              (totalWidth / totalSteps).clamp(0.0, labelWidth);
+
+          // Центры кружков: от effectiveLabelWidth/2 до totalWidth - effectiveLabelWidth/2
+          final double startX = effectiveLabelWidth / 2;
+          final double endX = totalWidth - effectiveLabelWidth / 2;
+          final double step = totalSteps > 1
+              ? (endX - startX) / (totalSteps - 1)
+              : 0.0;
+          double centerOf(int i) => startX + step * i;
+
+          // Правая граница заливки прогресса
+          final double filledRight;
+          if (completedSteps >= totalSteps) {
+            filledRight = centerOf(totalSteps - 1);
+          } else if (completedSteps <= 0) {
+            filledRight = centerOf(0);
+          } else {
+            filledRight = centerOf(completedSteps);
+          }
+
+          final double lineWidth = centerOf(totalSteps - 1) - centerOf(0);
+          final double filledWidth =
+              (filledRight - centerOf(0)).clamp(0.0, lineWidth);
+
+          return SizedBox(
+            height: circleSize + 4 + labelHeight,
+            child: Stack(
+              clipBehavior: Clip.none,
               children: [
-                Column(
-                  children: [
-                    Container(
-                      width: 36,
-                      height: 36,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: completed
-                            ? AppColors.success
-                            : (current ? AppColors.primary : AppColors.surfaceVariant),
-                        border: current
-                            ? Border.all(color: AppColors.primaryContainer, width: 4)
-                            : null,
-                      ),
-                      child: Center(
-                        child: completed
-                            ? const Icon(Icons.check, color: Colors.white, size: 18)
-                            : Text(
-                                '${index + 1}',
-                                style: TextStyle(
-                                  color: current ? Colors.white : AppColors.textDisabled,
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 14,
-                                ),
-                              ),
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      'Шаг ${index + 1}',
-                      style: AppTextStyles.caption.copyWith(fontSize: 9),
-                    ),
-                  ],
+                // ---------- Серая линия (полный трек) ----------
+                Positioned(
+                  left: centerOf(0),
+                  top: circleSize / 2 - lineThickness / 2,
+                  width: lineWidth,
+                  child: Container(
+                    height: lineThickness,
+                    color: AppColors.border,
+                  ),
                 ),
-                if (!isLast)
-                  Expanded(
-                    child: Container(
-                      margin: const EdgeInsets.only(bottom: 16),
-                      height: 2,
-                      color: completed ? AppColors.success : AppColors.border,
+                // ---------- Зелёная линия (прогресс) ----------
+                Positioned(
+                  left: centerOf(0),
+                  top: circleSize / 2 - lineThickness / 2,
+                  width: filledWidth,
+                  child: Container(
+                    height: lineThickness,
+                    color: AppColors.success,
+                  ),
+                ),
+                // ---------- Кружки и подписи ----------
+                for (int i = 0; i < totalSteps; i++)
+                  Positioned(
+                    left: centerOf(i) - effectiveLabelWidth / 2,
+                    top: 0,
+                    width: effectiveLabelWidth,
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Container(
+                          width: circleSize,
+                          height: circleSize,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: i < completedSteps
+                                ? AppColors.success
+                                : (i == completedSteps &&
+                                        completedSteps < totalSteps
+                                    ? AppColors.primary
+                                    : AppColors.surfaceVariant),
+                            border: (i == completedSteps &&
+                                    completedSteps < totalSteps)
+                                ? Border.all(
+                                    color: AppColors.primaryContainer,
+                                    width: 4,
+                                  )
+                                : null,
+                          ),
+                          child: Center(
+                            child: i < completedSteps
+                                ? const Icon(
+                                    Icons.check,
+                                    color: Colors.white,
+                                    size: 18,
+                                  )
+                                : Text(
+                                    '${i + 1}',
+                                    style: TextStyle(
+                                      color: (i == completedSteps &&
+                                              completedSteps < totalSteps)
+                                          ? Colors.white
+                                          : AppColors.textDisabled,
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 14,
+                                    ),
+                                  ),
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          'Шаг ${i + 1}',
+                          style: AppTextStyles.caption.copyWith(fontSize: 9),
+                          textAlign: TextAlign.center,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ],
                     ),
                   ),
               ],
             ),
           );
-        }),
+        },
       ),
     );
   }

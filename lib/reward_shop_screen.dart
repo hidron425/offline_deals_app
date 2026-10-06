@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
+import 'package:supabase_flutter/supabase_flutter.dart' as supa;
+
+import 'theme/app_theme.dart';
+import 'widgets/app_widgets.dart';
 
 class RewardShopScreen extends StatefulWidget {
   const RewardShopScreen({super.key});
@@ -10,9 +12,12 @@ class RewardShopScreen extends StatefulWidget {
 }
 
 class _RewardShopScreenState extends State<RewardShopScreen> {
-  final _firestore = FirebaseFirestore.instance;
   late final String _userId;
   int _cycleCount = 0;
+  int _coins = 0;
+  bool _loading = true;
+
+  supa.SupabaseClient get _sb => supa.Supabase.instance.client;
 
   final List<Map<String, dynamic>> _rewards = [
     {
@@ -41,26 +46,37 @@ class _RewardShopScreenState extends State<RewardShopScreen> {
   @override
   void initState() {
     super.initState();
-    _userId = FirebaseAuth.instance.currentUser!.uid;
-    _loadCycleCount();
+    _userId = supa.Supabase.instance.client.auth.currentUser!.id;
+    _loadUserData();
   }
 
-  Future<void> _loadCycleCount() async {
-    final doc = await _firestore.collection('user_progress').doc(_userId).get();
-    setState(() {
-      _cycleCount = (doc.data()?['cycleCount'] as num?)?.toInt() ?? 0;
-    });
+  Future<void> _loadUserData() async {
+    try {
+      final data = await _sb
+          .from('user_progress')
+          .select('cycle_count, coins')
+          .eq('user_id', _userId)
+          .maybeSingle();
+      if (data != null && mounted) {
+        setState(() {
+          _cycleCount = (data['cycle_count'] as num?)?.toInt() ?? 0;
+          _coins = (data['coins'] as num?)?.toInt() ?? 0;
+        });
+      }
+    } catch (e) {
+      print('❌ _loadUserData: $e');
+    }
+    if (mounted) setState(() => _loading = false);
   }
 
   Future<void> _purchaseReward(Map<String, dynamic> reward) async {
-    final doc = await _firestore.collection('user_progress').doc(_userId).get();
-    final data = doc.data() ?? {};
-    final coins = data['coins'] as int? ?? 0;
     final cost = reward['cost'] as int;
 
-    if (coins < cost) {
+    if (_coins < cost) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Недостаточно монет')));
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Недостаточно монет')),
+        );
       }
       return;
     }
@@ -78,46 +94,94 @@ class _RewardShopScreenState extends State<RewardShopScreen> {
     );
     if (confirm != true) return;
 
-    await _firestore.collection('user_progress').doc(_userId).update({
-      'coins': FieldValue.increment(-cost),
-      'purchasedRewards': FieldValue.arrayUnion([reward['id']]),
-      'pendingBonuses': FieldValue.arrayUnion([{
+    try {
+      // Читаем свежие данные (монеты + pending_bonuses)
+      final data = await _sb
+          .from('user_progress')
+          .select('coins, pending_bonuses, purchased_rewards')
+          .eq('user_id', _userId)
+          .maybeSingle();
+      if (data == null) return;
+
+      final currentCoins = (data['coins'] as num?)?.toInt() ?? 0;
+      if (currentCoins < cost) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Недостаточно монет')),
+          );
+        }
+        return;
+      }
+
+      final pending = List<dynamic>.from(data['pending_bonuses'] ?? []);
+      pending.add({
         'title': reward['title'],
         'message': 'Вы обменяли монеты на награду!',
         'icon': reward['icon'],
-      }]),
-    });
+      });
 
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Награда "${reward['title']}" получена!')));
-      Navigator.pop(context);
+      final purchased = List<dynamic>.from(data['purchased_rewards'] ?? []);
+      purchased.add(reward['id']);
+
+      await _sb.from('user_progress').update({
+        'coins': currentCoins - cost,
+        'pending_bonuses': pending,
+        'purchased_rewards': purchased,
+      }).eq('user_id', _userId);
+
+      if (mounted) {
+        setState(() => _coins = currentCoins - cost);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Награда "${reward['title']}" получена!')),
+        );
+        Navigator.pop(context);
+      }
+    } catch (e) {
+      print('❌ _purchaseReward: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Ошибка: $e'), backgroundColor: AppColors.danger),
+        );
+      }
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    final availableRewards = _rewards.where((r) => _cycleCount >= (r['requiredLevel'] as int)).toList();
+    final availableRewards = _rewards
+        .where((r) => _cycleCount >= (r['requiredLevel'] as int))
+        .toList();
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Магазин наград')),
-      body: ListView.builder(
-        padding: const EdgeInsets.all(16),
-        itemCount: availableRewards.length,
-        itemBuilder: (context, index) {
-          final reward = availableRewards[index];
-          return Card(
-            child: ListTile(
-              leading: Text(reward['icon'], style: const TextStyle(fontSize: 32)),
-              title: Text(reward['title']),
-              subtitle: Text('${reward['cost']} монет'),
-              trailing: ElevatedButton(
-                onPressed: () => _purchaseReward(reward),
-                child: const Text('Купить'),
-              ),
-            ),
-          );
-        },
+      appBar: AppBar(
+        title: const Text('Магазин наград'),
+        actions: [
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            child: Center(child: CoinBadge(amount: _coins)),
+          ),
+        ],
       ),
+      body: _loading
+          ? const Center(child: CircularProgressIndicator())
+          : ListView.builder(
+              padding: const EdgeInsets.all(16),
+              itemCount: availableRewards.length,
+              itemBuilder: (context, index) {
+                final reward = availableRewards[index];
+                return Card(
+                  child: ListTile(
+                    leading: Text(reward['icon'], style: const TextStyle(fontSize: 32)),
+                    title: Text(reward['title']),
+                    subtitle: Text('${reward['cost']} монет'),
+                    trailing: ElevatedButton(
+                      onPressed: () => _purchaseReward(reward),
+                      child: const Text('Купить'),
+                    ),
+                  ),
+                );
+              },
+            ),
     );
   }
 }

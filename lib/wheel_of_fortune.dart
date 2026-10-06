@@ -1,14 +1,15 @@
 import 'dart:math';
 import 'package:flutter/material.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:supabase_flutter/supabase_flutter.dart' as supa;
 
 /// Модель приза для колеса
 class WheelPrize {
   final String label;
   final String icon;
-  final int weight; // относительная вероятность (чем больше, тем чаще)
-  final String? targetShopId; // если приз привязан к магазину
+  final int weight;
+  final String? targetShopId;
   final String description;
+  final int coins;                       // ← НОВОЕ
 
   const WheelPrize({
     required this.label,
@@ -16,31 +17,32 @@ class WheelPrize {
     required this.weight,
     this.targetShopId,
     required this.description,
+    this.coins = 0,                      // ← НОВОЕ
   });
 }
 
-/// Список призов по умолчанию (можно вынести в отдельный сервис)
+/// Список призов по умолчанию
 List<WheelPrize> getDefaultWheelPrizes() {
   return const [
     WheelPrize(
       label: 'Скидка 10% в H&M',
       icon: '👕',
       weight: 3,
-      targetShopId: 'H_M', // укажите реальный ID магазина
+      targetShopId: 'H&M',
       description: 'Предъявите QR-код на кассе для получения скидки.',
     ),
     WheelPrize(
       label: 'Бесплатный капучино в Starbucks',
       icon: '☕',
       weight: 2,
-      targetShopId: 'Starbucks', // укажите реальный ID
+      targetShopId: 'Starbucks',
       description: 'Покажите этот бонус бариста.',
     ),
     WheelPrize(
       label: 'Скидка 15% на электронику',
       icon: '🔌',
       weight: 2,
-      targetShopId: 'DNS', // ID магазина электроники
+      targetShopId: 'DNS',
       description: 'Скидка на любой товар при предъявлении бонуса.',
     ),
     WheelPrize(
@@ -48,6 +50,7 @@ List<WheelPrize> getDefaultWheelPrizes() {
       icon: '🪙',
       weight: 4,
       description: 'Монеты начислены на ваш счёт.',
+      coins: 50,                         // ← НОВОЕ
     ),
     WheelPrize(
       label: 'Подарочный стикерпак',
@@ -87,6 +90,8 @@ class _WheelOfFortuneDialogState extends State<WheelOfFortuneDialog>
   bool _isSpinning = false;
   bool _prizeClaimed = false;
 
+  supa.SupabaseClient get _sb => supa.Supabase.instance.client;
+
   @override
   void initState() {
     super.initState();
@@ -96,7 +101,7 @@ class _WheelOfFortuneDialogState extends State<WheelOfFortuneDialog>
     );
     _controller.addListener(() {
       setState(() {
-        _rotation = _controller.value * 2 * pi * 5; // 5 полных оборотов
+        _rotation = _controller.value * 2 * pi * 5;
       });
     });
     _controller.addStatusListener((status) {
@@ -112,47 +117,92 @@ class _WheelOfFortuneDialogState extends State<WheelOfFortuneDialog>
     super.dispose();
   }
 
-  void _startSpin() {
-    if (_isSpinning) return;
-    setState(() {
-      _isSpinning = true;
-      _prizeClaimed = false;
-    });
+  Future<void> _startSpin() async {
+  if (_isSpinning) return;
 
-    // Выбираем случайный приз на основе весов
-    final totalWeight = widget.prizes.fold(0, (sum, p) => sum + p.weight);
-    final random = Random();
-    int target = random.nextInt(totalWeight);
-    int cumulative = 0;
-    for (final prize in widget.prizes) {
-      cumulative += prize.weight;
-      if (target < cumulative) {
-        _selectedPrize = prize;
-        break;
+  // Загружаем уже полученные бонусы, чтобы не повторяться
+  Set<String> alreadyWonLabels = {};
+  try {
+    final data = await _sb
+        .from('user_progress')
+        .select('pending_bonuses, claimed_bonuses')
+        .eq('user_id', widget.userId)
+        .maybeSingle();
+    if (data != null) {
+      for (final item in (data['pending_bonuses'] as List? ?? [])) {
+        if (item is Map && item['title'] != null) {
+          alreadyWonLabels.add(item['title'].toString());
+        }
+      }
+      for (final item in (data['claimed_bonuses'] as List? ?? [])) {
+        if (item is Map && item['title'] != null) {
+          alreadyWonLabels.add(item['title'].toString());
+        }
       }
     }
-
-    _controller.reset();
-    _controller.forward();
+  } catch (e) {
+    print('❌ _startSpin load: $e');
   }
+
+  // Фильтруем призы — оставляем только не выигранные
+  final availablePrizes = widget.prizes
+      .where((p) => !alreadyWonLabels.contains(p.label))
+      .toList();
+
+  // Если всё выиграно — сбрасываем и разрешаем повтор
+  final pool = availablePrizes.isEmpty ? widget.prizes : availablePrizes;
+
+  setState(() {
+    _isSpinning = true;
+    _prizeClaimed = false;
+  });
+
+  final totalWeight = pool.fold(0, (sum, p) => sum + p.weight);
+  final random = Random();
+  int target = random.nextInt(totalWeight);
+  int cumulative = 0;
+  for (final prize in pool) {
+    cumulative += prize.weight;
+    if (target < cumulative) {
+      _selectedPrize = prize;
+      break;
+    }
+  }
+
+  _controller.reset();
+  _controller.forward();
+}
 
   Future<void> _finishSpin() async {
     if (_selectedPrize == null || _prizeClaimed) return;
     setState(() => _prizeClaimed = true);
 
-    // Добавляем приз в pendingBonuses пользователя
-    await FirebaseFirestore.instance.collection('user_progress').doc(widget.userId).update({
-      'pendingBonuses': FieldValue.arrayUnion([
-        {
+    // Добавляем приз в pending_bonuses
+    try {
+      final data = await _sb
+          .from('user_progress')
+          .select('pending_bonuses')
+          .eq('user_id', widget.userId)
+          .maybeSingle();
+
+      if (data != null) {
+        final pending = List<dynamic>.from(data['pending_bonuses'] ?? []);
+        pending.add({
           'title': _selectedPrize!.label,
           'message': _selectedPrize!.description,
           'icon': _selectedPrize!.icon,
           'targetShopId': _selectedPrize!.targetShopId ?? '',
-        }
-      ]),
-    });
+          'coins': _selectedPrize!.coins,  // ← НОВОЕ — прокидываем монеты
+        });
 
-    // Показываем результат
+        await _sb.from('user_progress').update({
+          'pending_bonuses': pending,
+        }).eq('user_id', widget.userId);
+      }
+    } catch (e) {
+      print('❌ _finishSpin (wheel): $e');
+    }
+
     if (mounted) {
       await showDialog(
         context: context,
@@ -169,8 +219,7 @@ class _WheelOfFortuneDialogState extends State<WheelOfFortuneDialog>
           ],
         ),
       );
-      // Закрываем колесо
-      Navigator.pop(context);
+      if (mounted) Navigator.pop(context);
     }
   }
 
@@ -213,7 +262,7 @@ class _WheelPainter extends CustomPainter {
     final center = Offset(size.width / 2, size.height / 2);
     final radius = size.width / 2;
     final totalWeight = prizes.fold(0, (sum, p) => sum + p.weight);
-    double startAngle = -pi / 2; // начинаем сверху
+    double startAngle = -pi / 2;
 
     for (final prize in prizes) {
       final sweepAngle = (prize.weight / totalWeight) * 2 * pi;
@@ -223,7 +272,6 @@ class _WheelPainter extends CustomPainter {
       canvas.drawArc(Rect.fromCircle(center: center, radius: radius),
           startAngle, sweepAngle, true, paint);
 
-      // Линии-разделители
       final borderPaint = Paint()
         ..style = PaintingStyle.stroke
         ..strokeWidth = 2
@@ -231,7 +279,6 @@ class _WheelPainter extends CustomPainter {
       canvas.drawLine(center,
           center + Offset(cos(startAngle), sin(startAngle)) * radius, borderPaint);
 
-      // Текст на секторе (упрощённо — иконка)
       final labelAngle = startAngle + sweepAngle / 2;
       final labelPos = center + Offset(cos(labelAngle), sin(labelAngle)) * (radius * 0.6);
       TextPainter(
