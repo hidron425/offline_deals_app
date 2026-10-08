@@ -833,6 +833,47 @@ class _MapPainter extends CustomPainter {
     required this.animation,
   }) : super(repaint: animation);
 
+  /// Ширина слова в кеглях (em), ЗАМЕРЕННАЯ, а не оценённая по числу
+  /// символов: у «M», «W», «Ш» глиф доходит до 0.9em, из-за чего слово не
+  /// влезало в отведённую ширину и Flutter рвал его посередине
+  /// («Massim / o Dutti»). Ключ — само слово, так что записей максимум
+  /// столько, сколько уникальных названий в ТЦ.
+  static final Map<String, double> _wordWidthEmCache = {};
+
+  /// Замер делаем на эталонном кегле 100 и на w600 — самом широком весе,
+  /// который мы используем. Поэтому оценка консервативная и не зависит от
+  /// итогового кегля: иначе получилась бы рекурсия «вес зависит от
+  /// размера, размер — от замера».
+  static double _wordWidthEm(String word) {
+    if (word.isEmpty) return 0;
+    final cached = _wordWidthEmCache[word];
+    if (cached != null) return cached;
+
+    const probeSize = 100.0;
+    // Фолбэк на старую оценку 0.55em на символ, если замер не удался.
+    var em = word.length * 0.55;
+    try {
+      final probe = TextPainter(
+        text: TextSpan(
+          text: word,
+          style: const TextStyle(
+            fontSize: probeSize,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        textDirection: TextDirection.ltr,
+      )..layout();
+      final measured = probe.width / probeSize;
+      probe.dispose();
+      if (measured.isFinite && measured > 0) em = measured;
+    } catch (_) {
+      // остаёмся на оценке
+    }
+
+    _wordWidthEmCache[word] = em;
+    return em;
+  }
+
   double _px(double screenPx) => screenPx / scale;
 
   @override
@@ -874,32 +915,256 @@ class _MapPainter extends CustomPainter {
 
   // --- подписи ------------------------------------------------------------
 
+  /// Область, в которую встаёт подпись: габариты произвольного контура из
+  /// label_polygon, иначе прямоугольник label_rect, иначе дефолт от
+  /// габаритов зоны.
+  Rect? _effectiveLabelRect(ShopZone zone) {
+    final poly = zone.labelPolygon;
+    if (poly != null && poly.length >= 3) {
+      var minX = poly.first.dx, maxX = poly.first.dx;
+      var minY = poly.first.dy, maxY = poly.first.dy;
+      for (final p in poly) {
+        if (p.dx < minX) minX = p.dx;
+        if (p.dx > maxX) maxX = p.dx;
+        if (p.dy < minY) minY = p.dy;
+        if (p.dy > maxY) maxY = p.dy;
+      }
+      return Rect.fromLTRB(minX, minY, maxX, maxY);
+    }
+    if (zone.labelRect != null) return zone.labelRect;
+    // Дефолт: 80% ширины × 55% высоты зоны, по её центру. Гарантирует, что
+    // любой магазин получит подпись, даже если оператор её не настраивал.
+    final b = zone.bounds;
+    if (b.width <= 0 || b.height <= 0) return null;
+    final w = b.width * 0.8;
+    final h = b.height * 0.55;
+    return Rect.fromCenter(center: b.center, width: w, height: h);
+  }
+
+  /// TextPainter подписи для заданного кегля и длины строки.
+  ///
+  /// Вес зависит от ВИДИМОГО размера (кегль × зум): мелкому тексту вес
+  /// нужен для читаемости, а крупный w600 выглядел бы тяжелее линий плана.
+  TextPainter _buildLabelPainter(
+      String name, double fontSize, double maxWidth) {
+    final visible = fontSize * scale;
+    final weight = visible >= 18
+        ? FontWeight.w400
+        : visible >= 13
+            ? FontWeight.w500
+            : FontWeight.w600;
+    return TextPainter(
+      text: TextSpan(
+        text: name,
+        style: TextStyle(
+          fontSize: fontSize,
+          fontWeight: weight,
+          color: const Color(0xFF14171C),
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+      textAlign: TextAlign.center,
+      maxLines: 2,
+      ellipsis: '…',
+    )..layout(maxWidth: maxWidth);
+  }
+
   void _paintLabel(Canvas canvas, Size size, ShopZone zone, String name) {
+    final labelRect = _effectiveLabelRect(zone);
+    if (labelRect != null && labelRect.width > 0 && labelRect.height > 0) {
+      // Область подписи: нарисованная оператором или дефолтная от габаритов
+      // зоны. Проверок контура и anchor-room здесь нет — место уже выбрано,
+      // остаётся подобрать кегль и ориентацию.
+      final rectPx = Rect.fromLTWH(
+        labelRect.left * size.width,
+        labelRect.top * size.height,
+        labelRect.width * size.width,
+        labelRect.height * size.height,
+      );
+      // Константы отступа и кегля ниже (8/9/16/24/32/5/3) подбирались на
+      // холсте iPhone шириной ~377px. Приводим их к фактической ширине
+      // холста: иначе один и тот же магазин переносится по-разному на
+      // телефоне, планшете и в предпросмотре админки, где холст втрое шире.
+      final canvasRatio = size.width / 377.0;
+
+      // Отступ внутри области: 8 приведённых пикселей, но не больше 8%
+      // ширины. На крупной области — как раньше, на мелкой он больше не
+      // съедает её целиком. Раньше у зоны 40×30 px дефолтная область 24×12
+      // после вычета 8+8 оставляла 4 px высоты, строка туда не влезала ни
+      // на каком кегле — и подпись не рисовалась вообще.
+      final pad = math.min(8 * canvasRatio / scale, rectPx.width * 0.08);
+      // Меньше пикселя — не повод отказываться от подписи: что реально
+      // влезет, решают циклы подбора кегля ниже.
+      final innerW = math.max(1.0, rectPx.width - pad);
+      final innerH = math.max(1.0, rectPx.height - pad);
+
+      // Узкая высокая область -> текст идёт вдоль неё, повёрнутый на 90°.
+      // Нарисованному вручную контуру ориентацию не навязываем: оператор
+      // уже задал её формой.
+      // Автоматическая вертикаль применяется только если оператор не задал
+      // угол. Явный угол — воля оператора, он сильнее эвристики формы.
+      final hasAngle = (zone.labelAngle ?? 0) != 0;
+      final vertical = !hasAngle &&
+          zone.labelPolygon == null &&
+          rectPx.height > rectPx.width * 1.3;
+
+      // Длина строки идёт по одной оси области, толщина блока — по другой.
+      // Для повёрнутой подписи они меняются местами.
+      final runPx = vertical ? innerH : innerW;
+      final thinPx = vertical ? innerW : innerH;
+
+      // Дефолтная область (оператор ничего не задавал) бывает совсем
+      // мелкой — ей разрешаем опускаться до 3px, лишь бы подпись была.
+      // Заданным руками области и полигону оставляем прежние 5px.
+      final isDefaultRect =
+          zone.labelPolygon == null && zone.labelRect == null;
+
+      // Потолок кегля зависит от зума: на общем виде подписи мелкие (не
+      // превращаются в кашу), на глубоком зуме крупные (читаются).
+      // scale 1 -> 9px, scale 2 -> 12px, scale 6 и дальше -> 24px.
+      final zoomCap = math.min(24.0, math.max(9.0, 9.0 + (scale - 1.0) * 3.0)) *
+          canvasRatio /
+          scale;
+      final maxFont = math.min(zoomCap, 32.0 * canvasRatio / scale);
+      final minFont = (isDefaultRect ? 3.0 : 5.0) * canvasRatio / scale;
+      // Старт — 16px, но не выше потолка: иначе крупная зона на общем виде
+      // игнорировала бы zoomCap и давала кашу из подписей.
+      var fontSize = math.min(16.0 * canvasRatio / scale, maxFont);
+
+      // Растём, пока влезает: если после старта в области остаётся место,
+      // текст должен им пользоваться. didExceedMaxLines страхует от роста
+      // в многоточие — влезшей считается только целая подпись.
+      while (true) {
+        final next = fontSize / 0.9;
+        if (next > maxFont) break;
+        final probe = _buildLabelPainter(name, next, runPx);
+        final fits = probe.height <= thinPx && !probe.didExceedMaxLines;
+        probe.dispose();
+        if (!fits) break;
+        fontSize = next;
+      }
+
+      // Затем обычная усадка, если стартовый кегль не влез.
+      var painter = _buildLabelPainter(name, fontSize, runPx);
+      while (painter.height > thinPx && fontSize > minFont) {
+        painter.dispose();
+        fontSize *= 0.9;
+        painter = _buildLabelPainter(name, fontSize, runPx);
+      }
+      // Намеренно НЕ проверяем painter.height повторно: если текст не влез
+      // даже на минимальном кегле, рисуем как есть. Смысл дефолтной области
+      // в том, чтобы подпись была у каждого магазина, а зона без названия
+      // хуже мелкого названия.
+
+      final center = rectPx.center;
+      final rad = (zone.labelAngle ?? 0) * math.pi / 180;
+      final topLeft = Offset(-painter.width / 2, -painter.height / 2);
+
+      if (vertical) {
+        // Форма сама диктует ориентацию, поэтому label_angle здесь не
+        // применяем. Две строки многословного названия так и останутся
+        // двумя строками — повернётся весь блок целиком.
+        canvas.save();
+        canvas.translate(center.dx, center.dy);
+        canvas.rotate(math.pi / 2);
+        painter.paint(canvas, topLeft);
+        canvas.restore();
+      } else if (rad != 0) {
+        canvas.save();
+        canvas.translate(center.dx, center.dy);
+        canvas.rotate(rad);
+        painter.paint(canvas, topLeft);
+        canvas.restore();
+      } else {
+        painter.paint(canvas, center + topLeft);
+      }
+      painter.dispose();
+      return;
+    }
+
+    // Ручной угол подписи из админки (shops.label_angle), в радианах.
+    // Применяется ОДНИМ поворотом холста в самом конце, вокруг якоря:
+    // все замеры ниже (кегль, усадка, проверка углов) считаются в
+    // неповёрнутых координатах и остаются такими же, как были.
+    final labelTurn = (zone.labelAngle ?? 0) * math.pi / 180;
+
     final b = zone.bounds;
     final zoneWidthPx = b.width * size.width * scale;
     final zoneHeightPx = b.height * size.height * scale;
 
-    // Во сколько «кеглей» вытянется название: 0.55em на символ — грубая,
-    // но достаточная оценка средней ширины глифа.
-    final nameSpan = math.max(name.length * 0.55, 3);
+    // Многословные названия переносим на две строки, поэтому кегль считаем
+    // по САМОМУ ДЛИННОМУ СЛОВУ: именно оно задаёт ширину широкой строки.
+    // Для «Coffee Bean» это «Coffee», а не все 11 символов. Ширину слова
+    // замеряем (см. _wordWidthEm), а не оцениваем по числу символов.
+    final multiWord = name.trim().contains(RegExp(r'\s'));
+    final longestWord = name.trim().split(RegExp(r'\s+')).fold<String>(
+          '',
+          (longest, w) => w.length > longest.length ? w : longest,
+        );
+    final nameSpan = math.max(_wordWidthEm(longestWord), 3);
     final maxFontByWidth = zoneWidthPx / nameSpan;
     final maxFontByHeight = zoneHeightPx / nameSpan;
 
-    // Подпись поворачиваем в двух случаях: зона вытянута вверх, либо
-    // поперёк название не влезает, а вдоль влезает.
+    // Поворот — только для названий из одного слова. Две повёрнутые строки
+    // дали бы два столбца вбок, это нечитаемо: многословные всегда верстаем
+    // горизонтально, строками друг под другом.
     final bool vertical;
-    if (zoneHeightPx > zoneWidthPx * 1.1) {
+    if (multiWord) {
+      vertical = false;
+    } else if (zoneHeightPx > zoneWidthPx * 1.1) {
       vertical = true;
     } else {
       vertical = maxFontByWidth < 6.0 && maxFontByHeight >= 6.0;
     }
 
+    // Подпись центрируется на labelAnchor, а у невыпуклых зон (L, U) он НЕ
+    // совпадает с центром bounds. Поэтому мерим место по обе стороны от
+    // якоря: иначе подпись во всю ширину зоны, но с центром в стороне,
+    // вылезает на соседний магазин. Для прямоугольника это ровно bounds.
+    final ax = zone.labelAnchor.dx, ay = zone.labelAnchor.dy;
+    final roomX = 2 * math.min(ax - b.left, b.right - ax) * size.width * scale;
+    final roomY = 2 * math.min(ay - b.top, b.bottom - ay) * size.height * scale;
+
     // Дальше всё считаем от длины той оси, по которой пойдёт текст.
-    // Кегль берём от места, которое текст РЕАЛЬНО получит (минус отступы),
-    // иначе название шире выделенной ширины и ellipsis съедает символ.
-    final runPx = vertical ? zoneHeightPx : zoneWidthPx;
-    final fontSize = math.min(11.0, math.max(5.0, (runPx - 6) / nameSpan));
+    final runPx = vertical ? roomY : roomX;
+    final thinPx = vertical ? roomX : roomY;
+
+    // --- Кегль -------------------------------------------------------------
+    //
+    // ЕДИНИЦЫ. zoneWidthPx/zoneHeightPx уже умножены на scale — это пиксели
+    // ЭКРАНА, а не холста. Значит и fontSize здесь экранный: при отрисовке
+    // он делится на scale (fontSize / scale), а трансформация зума умножает
+    // обратно, поэтому ВИДИМЫЙ кегль равен ровно fontSize. Константы ниже
+    // (9, 24, 6) — тоже экранные пиксели. Смешать единицы нельзя: если
+    // считать кегль от холста, он перестанет расти при зуме.
+    //
+    // Берём минимум из трёх ограничений:
+    //   1. влезть в зону по ОБЕИМ осям: по длине — самым длинным словом,
+    //      по толщине — блоком из lines строк (строка ≈ 1.17 кегля);
+    //   2. потолок от зума: на общем виде мелко, чтобы не было каши,
+    //      на глубоком зуме крупно, чтобы читалось с телефона;
+    //   3. потолок от самой зоны, чтобы подпись её не переросла — ни в
+    //      длину, ни в толщину (0.8 от толщины: высота строки ≈ 1.17 кегля).
+    //
+    // lines = 1 для одного слова: место под вторую строку резервировать
+    // нельзя, иначе кегль одиночных названий падает вдвое. Одно слово на
+    // две строки и не переносится — кегль подобран так, что оно влезает.
+    final lines = multiWord ? 2 : 1;
+    final fitFont = math.min(
+      (runPx - 6) / nameSpan,
+      (thinPx - 6) / (lines * 1.17),
+    );
+    final zoomCap = math.min(24.0, math.max(9.0, 9.0 + (scale - 1.0) * 3.0));
+    final zoneCap = math.min(runPx * 0.35, thinPx * 0.8);
+    final fontSize =
+        math.max(5.0, math.min(fitFont, math.min(zoomCap, zoneCap)));
+
     final labelMaxWidth = runPx / scale - _px(6);
+
+    // Места под текст не осталось совсем (якорь вплотную к краю зоны) —
+    // выходим ДО обеих ветвей видимости: layout с отрицательной шириной
+    // падает в debug.
+    if (labelMaxWidth <= 0) return;
 
     // Видимость подписи зависит от зума: чем ближе, тем больше названий.
     if (scale >= 2.0) {
@@ -912,19 +1177,78 @@ class _MapPainter extends CustomPainter {
       return;
     }
 
-    final painter = TextPainter(
-      text: TextSpan(
-        text: name,
-        style: TextStyle(
-          fontSize: fontSize / scale,
-          fontWeight: FontWeight.w600,
-          color: const Color(0xFF14171C),
+    // Симметричная проверка: подпись должна лежать внутри САМОГО контура, а
+    // не внутри его bounding box — у невыпуклых зон это разные вещи, и угол
+    // подписи оказывается на соседнем магазине. Проверка строже прежнего
+    // отсева по высоте (без 20% допуска) и ловит обе оси сразу.
+    //
+    // Берём ширину САМОЙ ШИРОКОЙ СТРОКИ, а не p.width: у подписи,
+    // перенесённой на две строки, p.width равен всей выделенной ширине, и
+    // проверка браковала бы любую двухстрочную подпись в непрямоугольной
+    // зоне — то есть ровно те подписи, которые мы лечим.
+    bool cornersInside(TextPainter p) {
+      final widestLine = p
+          .computeLineMetrics()
+          .fold<double>(0, (m, l) => l.width > m ? l.width : m);
+      final drawnRun = widestLine > 0 ? widestLine : p.width;
+      // В повёрнутом режиме длина текста идёт по вертикали, а толщина — по
+      // горизонтали, поэтому каждую сторону нормируем на свою сторону
+      // холста.
+      final halfX = (vertical ? p.height : drawnRun) / 2 / size.width;
+      final halfY = (vertical ? drawnRun : p.height) / 2 / size.height;
+      return zone.contains(Offset(ax - halfX, ay - halfY)) &&
+          zone.contains(Offset(ax + halfX, ay - halfY)) &&
+          zone.contains(Offset(ax + halfX, ay + halfY)) &&
+          zone.contains(Offset(ax - halfX, ay + halfY));
+    }
+
+    TextPainter buildPainter(double fs) {
+      // Чем крупнее подпись, тем легче начертание: w600 на 24px выглядит
+      // тяжелее линий плана, а мелкому тексту вес наоборот нужен. Вес
+      // считаем от ТЕКУЩЕГО кегля: после усадки подпись снова мелкая и
+      // ей снова нужен вес.
+      final weight = fs >= 18
+          ? FontWeight.w400
+          : fs >= 13
+              ? FontWeight.w500
+              : FontWeight.w600;
+      return TextPainter(
+        text: TextSpan(
+          text: name,
+          style: TextStyle(
+            fontSize: fs / scale,
+            fontWeight: weight,
+            color: const Color(0xFF14171C),
+          ),
         ),
-      ),
-      textDirection: TextDirection.ltr,
-      maxLines: 1,
-      ellipsis: '…',
-    )..layout(maxWidth: labelMaxWidth);
+        textDirection: TextDirection.ltr,
+        textAlign: TextAlign.center,
+        maxLines: 2,
+        ellipsis: '…',
+      )..layout(maxWidth: labelMaxWidth);
+    }
+
+    // Не влезло в контур — не прячем сразу, а уменьшаем кегль: зона совсем
+    // без названия хуже мелкого названия. Три попытки по 20% дают 51% от
+    // исходного кегля; ниже 5px не опускаемся — там уже нечитаемо, и тогда
+    // подпись действительно не рисуем.
+    var currentFont = fontSize;
+    var painter = buildPainter(currentFont);
+    var fits = cornersInside(painter);
+    var attempts = 0;
+    while (!fits && attempts < 3) {
+      final next = currentFont * 0.8;
+      if (next < 5.0) break;
+      painter.dispose();
+      currentFont = next;
+      painter = buildPainter(currentFont);
+      fits = cornersInside(painter);
+      attempts++;
+    }
+    if (!fits) {
+      painter.dispose();
+      return;
+    }
 
     final anchor = Offset(
       zone.labelAnchor.dx * size.width,
@@ -934,12 +1258,17 @@ class _MapPainter extends CustomPainter {
     // Только текст, без плашки. Центруем его по якорю зоны.
     final textTopLeft = Offset(-painter.width / 2, -painter.height / 2);
 
-    if (vertical) {
+    // Заданный руками угол ЗАМЕНЯЕТ автоповорот: оператор сказал «45°» —
+    // значит 45°, а не 45° поверх вертикальной подписи. Угол не задан или
+    // равен нулю -> turn тот же, что был до появления label_angle.
+    final turn = labelTurn != 0 ? labelTurn : (vertical ? math.pi / 2 : 0.0);
+
+    if (turn != 0) {
       // Разворачиваем систему координат вокруг якоря — дальше рисуем ровно
       // так же, как в горизонтальном случае, но уже от локального нуля.
       canvas.save();
       canvas.translate(anchor.dx, anchor.dy);
-      canvas.rotate(math.pi / 2);
+      canvas.rotate(turn);
       painter.paint(canvas, textTopLeft);
       canvas.restore();
       return;

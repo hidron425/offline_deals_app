@@ -142,6 +142,11 @@ class _MallMapScreenState extends State<MallMapScreen> {
           ? Offset(s.entryX!, s.entryY!)
           : null;
 
+      // Ручной якорь подписи: оба поля или ничего.
+      final labelOverride = (s.labelX != null && s.labelY != null)
+          ? Offset(s.labelX!, s.labelY!)
+          : null;
+
       ShopZone? zone;
       final polygonRaw = s.rawMapPolygon;
       if (polygonRaw != null) {
@@ -149,6 +154,11 @@ class _MallMapScreenState extends State<MallMapScreen> {
           'map_polygon': polygonRaw,
           'entry_x': s.entryX,
           'entry_y': s.entryY,
+          'label_x': s.labelX,
+          'label_y': s.labelY,
+          'label_angle': s.rawLabelAngle,
+          'label_rect': s.rawLabelRect,
+          'label_polygon': s.rawLabelPolygon,
         });
       }
       // Полигон битый или его нет — падаем назад на прямоугольник.
@@ -159,6 +169,11 @@ class _MallMapScreenState extends State<MallMapScreen> {
           height: s.mapHeight!,
         )),
         entry: entry,
+        labelOverride: labelOverride,
+        labelAngle: s.rawLabelAngle,
+        labelRect: ShopZone.parseLabelRect(s.rawLabelRect),
+        labelPolygon:
+            ShopZone.readLabelPolygon({'label_polygon': s.rawLabelPolygon}),
       );
 
       out.add(MallStore(id: s.id, name: s.name, zone: zone));
@@ -272,7 +287,10 @@ class _MallMapScreenState extends State<MallMapScreen> {
         showZoomControls: true,
         maxWidth: double.infinity,
         minScale: 1.0,
-        maxScale: 4.0,
+        // Тот же предел, что в редакторе зон (InteractiveViewer maxScale: 12
+        // и зажим в _zoomAt). Иначе оператор размечает на зуме, недоступном
+        // покупателю, и подписи у него выглядят иначе.
+        maxScale: 12.0,
 
         // onPanLockChanged не нужен: родительского скролла на вкладке нет.
         onStoreSelected: (store) {

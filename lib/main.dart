@@ -2044,6 +2044,11 @@ bool isAlreadyInList(List<dynamic> list, String ruleId) {
             ? Offset(s.entryX!, s.entryY!)
             : null;
 
+        // Ручной якорь подписи: оба поля или ничего.
+        final labelOverride = (s.labelX != null && s.labelY != null)
+            ? Offset(s.labelX!, s.labelY!)
+            : null;
+
         ShopZone? zone;
         final polygonRaw = s.rawMapPolygon;
         if (polygonRaw != null) {
@@ -2051,6 +2056,11 @@ bool isAlreadyInList(List<dynamic> list, String ruleId) {
             'map_polygon': polygonRaw,
             'entry_x': s.entryX,
             'entry_y': s.entryY,
+            'label_x': s.labelX,
+            'label_y': s.labelY,
+            'label_angle': s.rawLabelAngle,
+            'label_rect': s.rawLabelRect,
+            'label_polygon': s.rawLabelPolygon,
           });
         }
         // Полигон битый или его нет — падаем назад на прямоугольник.
@@ -2061,6 +2071,11 @@ bool isAlreadyInList(List<dynamic> list, String ruleId) {
             height: s.mapHeight!,
           )),
           entry: entry,
+          labelOverride: labelOverride,
+          labelAngle: s.rawLabelAngle,
+          labelRect: ShopZone.parseLabelRect(s.rawLabelRect),
+          labelPolygon:
+              ShopZone.readLabelPolygon({'label_polygon': s.rawLabelPolygon}),
         );
         return MallStore(id: s.id, name: s.name, zone: zone);
       })
@@ -2088,6 +2103,11 @@ bool isAlreadyInList(List<dynamic> list, String ruleId) {
       autoFrame: true,
       showZoomControls: false,
       height: 240,
+
+      // Превью не зумится, но предел держим общий с вкладкой «Карта» и
+      // редактором зон — на случай, если режим когда-нибудь включат.
+      minScale: 1.0,
+      maxScale: 12.0,
 
       // Тап по карте открывает полноэкранную вкладку «Карта»
       onTapMap: () {

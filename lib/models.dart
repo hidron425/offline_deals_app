@@ -22,6 +22,11 @@ class Shop {
   final List<List<double>>? rawMapPolygon;   // [[x,y],[x,y],...] из jsonb
   final double? entryX;
   final double? entryY;
+  final double? labelX;
+  final double? labelY;
+  final double? rawLabelAngle;
+  final List<double>? rawLabelRect;   // [x, y, w, h] из jsonb
+  final List<List<double>>? rawLabelPolygon;   // [[x,y],...] из jsonb
 
   Shop({
     required this.id,
@@ -45,6 +50,11 @@ class Shop {
     this.rawMapPolygon,   // ← добавили
     this.entryX,          // ← добавили
     this.entryY,
+    this.labelX,
+    this.labelY,
+    this.rawLabelAngle,
+    this.rawLabelRect,
+    this.rawLabelPolygon,
   });
 
   factory Shop.fromSupabase(Map<String, dynamic> json) {
@@ -81,6 +91,21 @@ class Shop {
     : null,
       entryX: (json['entry_x'] as num?)?.toDouble(),
       entryY: (json['entry_y'] as num?)?.toDouble(),
+      labelX: (json['label_x'] as num?)?.toDouble(),
+      labelY: (json['label_y'] as num?)?.toDouble(),
+      rawLabelAngle: (json['label_angle'] as num?)?.toDouble(),
+      rawLabelRect: json['label_rect'] is List
+          ? (json['label_rect'] as List)
+              .whereType<num>()
+              .map((v) => v.toDouble())
+              .toList()
+          : null,
+      rawLabelPolygon: json['label_polygon'] is List
+          ? (json['label_polygon'] as List)
+              .whereType<List>()
+              .map((p) => p.whereType<num>().map((v) => v.toDouble()).toList())
+              .toList()
+          : null,
     );
   }
 }

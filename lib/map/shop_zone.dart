@@ -23,16 +23,56 @@ class ShopZone {
   /// Точка входа (дверь) на границе контура. null -> берём «визуальный центр».
   final Offset? entry;
 
-  ShopZone._(this.points, this.entry);
+  /// Якорь подписи, выставленный руками в админке (shops.label_x/label_y).
+  /// null -> положение подбирается автоматически, как раньше.
+  ///
+  /// Правки контура (withPoints/movedVertex/shifted/...) якорь НЕ переносят:
+  /// он живёт в БД и в редакторе зон, а клиент зону не правит.
+  final Offset? labelOverride;
 
-  factory ShopZone.polygon(List<Offset> pts, {Offset? entry}) {
+  /// Угол подписи в градусах по часовой стрелке (shops.label_angle).
+  /// null или 0 -> подпись ставится как раньше (горизонтально, а в узкой
+  /// высокой зоне — автоматически вдоль неё).
+  final double? labelAngle;
+
+  /// Прямоугольник подписи, выставленный руками в админке
+  /// (shops.label_rect = [x, y, w, h], нормализованные 0..1, от левого
+  /// верхнего угла). Задан -> текст живёт внутри него и больше не
+  /// подбирает себе место сам. null -> всё как раньше, по якорю.
+  final Rect? labelRect;
+
+  /// Произвольная область подписи (shops.label_polygon = [[x,y],...],
+  /// нормализованные 0..1, как map_polygon). Старше прямоугольника:
+  /// задана -> подпись считается по её габаритам.
+  final List<Offset>? labelPolygon;
+
+  ShopZone._(this.points, this.entry, this.labelOverride, this.labelAngle,
+      this.labelRect, this.labelPolygon);
+
+  factory ShopZone.polygon(List<Offset> pts,
+      {Offset? entry,
+      Offset? labelOverride,
+      double? labelAngle,
+      Rect? labelRect,
+      List<Offset>? labelPolygon}) {
     assert(pts.length >= 3, 'Полигон не может иметь меньше 3 вершин');
-    return ShopZone._(List.unmodifiable(pts), entry);
+    return ShopZone._(List.unmodifiable(pts), entry, labelOverride, labelAngle,
+        labelRect, labelPolygon);
   }
 
-  factory ShopZone.fromRect(Rect r, {Offset? entry}) => ShopZone._(
+  factory ShopZone.fromRect(Rect r,
+          {Offset? entry,
+          Offset? labelOverride,
+          double? labelAngle,
+          Rect? labelRect,
+          List<Offset>? labelPolygon}) =>
+      ShopZone._(
         List.unmodifiable([r.topLeft, r.topRight, r.bottomRight, r.bottomLeft]),
         entry,
+        labelOverride,
+        labelAngle,
+        labelRect,
+        labelPolygon,
       );
 
   // --- кэш тяжёлых вычислений ---
@@ -49,11 +89,20 @@ class ShopZone {
   /// Приоритет: map_polygon -> старые прямоугольные поля -> null.
   static ShopZone? fromDb(Map<String, dynamic> row) {
     final entry = _readEntry(row);
+    final labelOverride = readLabelOverride(row);
+    final labelAngle = readLabelAngle(row);
+    final labelRect = readLabelRect(row);
+    final labelPolygon = readLabelPolygon(row);
 
     final raw = row['map_polygon'];
     final pts = _parsePoints(raw);
     if (pts != null && pts.length >= 3) {
-      return ShopZone.polygon(pts, entry: entry);
+      return ShopZone.polygon(pts,
+          entry: entry,
+          labelOverride: labelOverride,
+          labelAngle: labelAngle,
+          labelRect: labelRect,
+          labelPolygon: labelPolygon);
     }
 
     final x = row['map_x'] as num?;
@@ -69,6 +118,10 @@ class ShopZone {
         height: h.toDouble(),
       )),
       entry: entry,
+      labelOverride: labelOverride,
+      labelAngle: labelAngle,
+      labelRect: labelRect,
+      labelPolygon: labelPolygon,
     );
   }
 
@@ -77,6 +130,55 @@ class ShopZone {
     final ey = row['entry_y'] as num?;
     if (ex == null || ey == null) return null;
     return Offset(ex.toDouble(), ey.toDouble());
+  }
+
+  /// Ручной якорь подписи из строки shops. Нужен ровно один раз — когда
+  /// заданы ОБА поля; одна координата без второй смысла не имеет.
+  /// Публичный: тем же чтением пользуются места, где зона собирается не из
+  /// сырой строки (фолбэк на прямоугольник в клиенте, редактор в админке).
+  static Offset? readLabelOverride(Map<String, dynamic> row) {
+    final lx = row['label_x'] as num?;
+    final ly = row['label_y'] as num?;
+    if (lx == null || ly == null) return null;
+    return Offset(lx.toDouble(), ly.toDouble());
+  }
+
+  /// Ручной угол подписи из строки shops, в градусах.
+  static double? readLabelAngle(Map<String, dynamic> row) =>
+      (row['label_angle'] as num?)?.toDouble();
+
+  /// Ручной прямоугольник подписи из строки shops.
+  static Rect? readLabelRect(Map<String, dynamic> row) =>
+      parseLabelRect(row['label_rect']);
+
+  /// Произвольная область подписи из строки shops. Меньше трёх вершин —
+  /// это не контур, возвращаем null и падаем на прямоугольник.
+  static List<Offset>? readLabelPolygon(Map<String, dynamic> row) {
+    final raw = row['label_polygon'];
+    if (raw is! List) return null;
+    final out = <Offset>[];
+    for (final v in raw) {
+      if (v is List && v.length >= 2) {
+        final x = (v[0] as num?)?.toDouble();
+        final y = (v[1] as num?)?.toDouble();
+        if (x != null && y != null) out.add(Offset(x, y));
+      }
+    }
+    return out.length >= 3 ? out : null;
+  }
+
+  /// [x, y, w, h] -> Rect. Нулевые и отрицательные размеры отбрасываем:
+  /// такой прямоугольник нечем заполнить, и клиент должен вернуться к
+  /// автоматическому размещению, а не нарисовать подпись в точке.
+  static Rect? parseLabelRect(dynamic raw) {
+    if (raw is! List || raw.length < 4) return null;
+    final v = <double>[];
+    for (final item in raw) {
+      if (item is! num) return null;
+      v.add(item.toDouble());
+    }
+    if (v[2] <= 0 || v[3] <= 0) return null;
+    return Rect.fromLTWH(v[0], v[1], v[2], v[3]);
   }
 
   /// Понимает оба формата: [[x,y], ...] и [{"x":..,"y":..}, ...].
@@ -137,9 +239,13 @@ class ShopZone {
   /// Центр масс. Для L/U-образных зон может оказаться СНАРУЖИ контура.
   Offset get centroid => _centroid ??= PolygonMath.centroid(points);
 
-  /// Точка, которую видно внутри зоны: центр масс, если он внутри,
-  /// иначе «полюс недоступности». Сюда ставим подпись.
+  /// Точка, куда ставим подпись.
+  ///
+  /// Ручной якорь из админки важнее расчётного: оператор видел план целиком
+  /// и поставил подпись туда, где она читается. Если якоря нет — центр масс,
+  /// когда он внутри контура, иначе «полюс недоступности».
   Offset get labelAnchor {
+    if (labelOverride != null) return labelOverride!;
     if (_anchor != null) return _anchor!;
     final c = centroid;
     _anchor = PolygonMath.contains(points, c)
@@ -186,6 +292,14 @@ class ShopZone {
   ShopZone withPoints(List<Offset> pts) => ShopZone.polygon(pts, entry: entry);
 
   ShopZone withEntry(Offset? e) => ShopZone.polygon(points, entry: e);
+
+  /// Снимает ручную расстановку подписи (якорь, угол, прямоугольник).
+  ///
+  /// Нужна редактору зон: там эти поля живут в строке списка магазинов, а
+  /// не в модели — иначе после «Очистить якорь» остались бы два источника
+  /// правды, и зона продолжала бы отвечать старым значением.
+  ShopZone withoutLabelPlacement() =>
+      ShopZone.polygon(points, entry: entry);
 
   ShopZone movedVertex(int index, Offset p) {
     final pts = [...points]..[index] = p;
