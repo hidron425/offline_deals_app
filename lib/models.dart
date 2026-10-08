@@ -19,6 +19,9 @@ class Shop {
   final double? mapHeight;
   final List<double>? imageTransform;
   final List<double>? infoImageTransform;
+  final List<List<double>>? rawMapPolygon;   // [[x,y],[x,y],...] из jsonb
+  final double? entryX;
+  final double? entryY;
 
   Shop({
     required this.id,
@@ -39,6 +42,9 @@ class Shop {
     this.mapHeight,
     this.imageTransform,
     this.infoImageTransform,
+    this.rawMapPolygon,   // ← добавили
+    this.entryX,          // ← добавили
+    this.entryY,
   });
 
   factory Shop.fromSupabase(Map<String, dynamic> json) {
@@ -68,6 +74,13 @@ class Shop {
       mapHeight: parseCoord(json['map_height']),
       imageTransform: null,
       infoImageTransform: null,
+      rawMapPolygon: json['map_polygon'] != null
+    ? (json['map_polygon'] as List)
+        .map((p) => (p as List).map((v) => (v as num).toDouble()).toList())
+        .toList()
+    : null,
+      entryX: (json['entry_x'] as num?)?.toDouble(),
+      entryY: (json['entry_y'] as num?)?.toDouble(),
     );
   }
 }

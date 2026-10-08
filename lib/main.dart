@@ -16,6 +16,8 @@ import 'package:flutter/gestures.dart';
 import 'package:supabase_flutter/supabase_flutter.dart' as supa;
 import 'all_shops_screen.dart';
 import 'package:qr_flutter/qr_flutter.dart';
+import 'map/mall_map_widget.dart';
+import 'map/shop_zone.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -1436,9 +1438,6 @@ class _DealsGameScreenState extends State<DealsGameScreen> {
   String _searchQuery = '';
   String? _selectedCategory;
   Shop? _selectedRouteShop;
-  final TextEditingController _mapSearchController = TextEditingController();
-
-  Offset _entrancePosition = const Offset(0.5, 0.8);
 
   int _completedSteps = 0;
   final int _totalSteps = 5;
@@ -1466,8 +1465,10 @@ class _DealsGameScreenState extends State<DealsGameScreen> {
 
   List<BannerAd> _banners = [];
   Map<String, Shop> _shopById = {};
-  final TransformationController _mapTransformationController = TransformationController();
-  double _mapScale = 1.0;
+  bool _mapPanLocked = false;
+String? _selectedMallMapUrl;
+double _mallEntranceX = 0.5;
+double _mallEntranceY = 0.9;
 
   supa.SupabaseClient get _sb => supa.Supabase.instance.client;
 
@@ -1478,13 +1479,6 @@ void initState() {
   _loadAll();
   ContentService.preload(['home_welcome', 'quest_rules']);
 }
-
-  @override
-  void dispose() {
-    _mapSearchController.dispose();
-    _mapTransformationController.dispose();
-    super.dispose();
-  }
 
   Future<void> _ensureDailyTasks() async {
     try {
@@ -1566,12 +1560,13 @@ void initState() {
 }
 
   Future<void> _loadUserLocation() async {
-    final data = await _sb
-        .from('user_progress')
-        .select()
-        .eq('user_id', _userId)
-        .maybeSingle();
-    if (data != null) {
+  final data = await _sb
+      .from('user_progress')
+      .select()
+      .eq('user_id', _userId)
+      .maybeSingle();
+  if (data != null) {
+    if (mounted) {
       setState(() {
         _selectedCity = data['selected_city'] as String?;
         _selectedMall = data['selected_mall'] as String?;
@@ -1579,6 +1574,27 @@ void initState() {
       });
     }
   }
+
+  // Загружаем карту и вход выбранного ТЦ
+  if (_selectedMallId != null) {
+    try {
+      final mall = await _sb
+          .from('malls')
+          .select('map_image_url, entrance_x, entrance_y')
+          .eq('firestore_id', _selectedMallId!)
+          .maybeSingle();
+      if (mall != null && mounted) {
+        setState(() {
+          _selectedMallMapUrl = mall['map_image_url'] as String?;
+          _mallEntranceX = (mall['entrance_x'] as num?)?.toDouble() ?? 0.5;
+          _mallEntranceY = (mall['entrance_y'] as num?)?.toDouble() ?? 0.9;
+        });
+      }
+    } catch (e) {
+      print('❌ _loadUserLocation mall: $e');
+    }
+  }
+}
 
   Future<void> _saveUserLocation(String city, String mall, String mallId) async {
   try {
@@ -1738,6 +1754,7 @@ void initState() {
       _pendingQRShop = null;
       _lastShop = null;
       _lastShopId = null;
+      _selectedRouteShop = null;
     });
     await _saveProgress();
   }
@@ -1760,6 +1777,7 @@ void initState() {
     _lastShopId = null;
     _lastCafeDate = null;
     _lastElectronicsDate = null;
+    _selectedRouteShop = null;
   });
   try {
     final deleted = await _sb
@@ -2003,341 +2021,90 @@ bool isAlreadyInList(List<dynamic> list, String ruleId) {
   }
 
   Widget _buildEnhancedMap() {
-    final categories = _allShops
-        .map((s) => s.category)
-        .where((c) => c.isNotEmpty)
-        .toSet()
-        .toList()
-      ..sort();
-
-    List<Shop> visibleShops = _getVisibleShops();
-
-    return Column(
-      children: [
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
-          child: TextField(
-            controller: _mapSearchController,
-            decoration: InputDecoration(
-              hintText: 'Поиск магазина',
-              prefixIcon: const Icon(Icons.search, color: AppColors.textSecondary),
-              suffixIcon: _searchQuery.isNotEmpty
-                  ? IconButton(
-                      icon: const Icon(Icons.clear, color: AppColors.textSecondary),
-                      onPressed: () {
-                        _mapSearchController.clear();
-                        setState(() => _searchQuery = '');
-                      },
-                    )
-                  : null,
-            ),
-            onChanged: (val) => setState(() => _searchQuery = val),
-          ),
-        ),
-        const SizedBox(height: AppSpacing.sm),
-        if (categories.isNotEmpty)
-          SizedBox(
-            height: 40,
-            child: ListView(
-              scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
-              children: [
-                Padding(
-                  padding: const EdgeInsets.only(right: 8),
-                  child: CategoryChip(
-                    label: 'Все',
-                    selected: _selectedCategory == null,
-                    onTap: () => setState(() => _selectedCategory = null),
-                  ),
-                ),
-                ...categories.map((cat) => Padding(
-                      padding: const EdgeInsets.only(right: 8),
-                      child: CategoryChip(
-                        label: cat,
-                        selected: _selectedCategory == cat,
-                        onTap: () => setState(() => _selectedCategory = cat),
-                      ),
-                    )),
-              ],
-            ),
-          ),
-        const SizedBox(height: AppSpacing.sm),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 8),
-          child: LayoutBuilder(
-            builder: (context, viewportConstraints) {
-              const double imageWidth = 2700;
-              const double imageHeight = 1536;
-              const double maxMapWidth = 1000;
-              final double mapWidth = math.min(viewportConstraints.maxWidth, maxMapWidth);
-              final double mapHeight = mapWidth * imageHeight / imageWidth;
-              final double containScale = math.min(mapWidth / imageWidth, mapHeight / imageHeight);
-              final double renderedWidth = imageWidth * containScale;
-              final double renderedHeight = imageHeight * containScale;
-
-              return Center(
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(AppRadius.xl),
-                  child: Container(
-                    width: mapWidth,
-                    height: mapHeight,
-                    decoration: BoxDecoration(
-                      color: AppColors.surfaceVariant,
-                      border: Border.all(color: AppColors.border),
-                    ),
-                    child: Stack(
-                      children: [
-                        Positioned.fill(
-                          child: Listener(
-                            onPointerSignal: (event) {
-                              if (event is PointerScrollEvent) {
-                                final double delta = event.scrollDelta.dy;
-                                final double currentScale = _mapTransformationController.value.getMaxScaleOnAxis();
-                                double newScale = delta < 0 ? currentScale * 1.15 : currentScale / 1.15;
-                                newScale = newScale.clamp(1.0, 4.0);
-                                final Offset focalPoint = event.localPosition;
-                                final Matrix4 currentMatrix = _mapTransformationController.value;
-                                final double scale = currentMatrix.getMaxScaleOnAxis();
-                                final Offset translation = Offset(currentMatrix.storage[12], currentMatrix.storage[13]);
-                                final Offset focalInContent = (focalPoint - translation) / scale;
-                                final double newTranslationX = focalPoint.dx - focalInContent.dx * newScale;
-                                final double newTranslationY = focalPoint.dy - focalInContent.dy * newScale;
-                                final Matrix4 newMatrix = Matrix4.identity()
-                                  ..translate(newTranslationX, newTranslationY)
-                                  ..scale(newScale);
-                                _mapTransformationController.value = newMatrix;
-                                setState(() => _mapScale = newScale);
-                              }
-                            },
-                            child: InteractiveViewer(
-                              transformationController: _mapTransformationController,
-                              panEnabled: true,
-                              scaleEnabled: true,
-                              minScale: 1.0,
-                              maxScale: 4.0,
-                              boundaryMargin: const EdgeInsets.all(300),
-                              clipBehavior: Clip.hardEdge,
-                              panAxis: PanAxis.free,
-                              child: SizedBox(
-                                width: renderedWidth,
-                                height: renderedHeight,
-                                child: Stack(
-                                  clipBehavior: Clip.none,
-                                  children: [
-                                    Positioned.fill(
-                                      child: Image.asset('assets/images/mall_map.png', fit: BoxFit.fill),
-                                    ),
-                                    ...visibleShops
-                                        .where((s) =>
-                                            s.mapX != null &&
-                                            s.mapY != null &&
-                                            s.mapWidth != null &&
-                                            s.mapHeight != null &&
-                                            s.mapWidth! > 0 &&
-                                            s.mapHeight! > 0)
-                                        .map((shop) {
-                                      final bool isHovered = _hoveredShopId == shop.id;
-                                      final bool isRouteTarget = _selectedRouteShop?.id == shop.id;
-                                      final double x = shop.mapX! * renderedWidth;
-                                      final double y = shop.mapY! * renderedHeight;
-                                      final double w = shop.mapWidth! * renderedWidth;
-                                      final double h = shop.mapHeight! * renderedHeight;
-
-                                      return Positioned(
-                                        left: x - w / 2,
-                                        top: y - h / 2,
-                                        width: w,
-                                        height: h,
-                                        child: GestureDetector(
-                                          onTap: () {
-                                            setState(() {
-                                              _selectedRouteShop = shop;
-                                              _hoveredShopId = shop.id;
-                                            });
-                                          },
-                                          child: MouseRegion(
-                                            onEnter: (_) => setState(() => _hoveredShopId = shop.id),
-                                            onExit: (_) => setState(() => _hoveredShopId = null),
-                                            child: AnimatedContainer(
-                                              duration: const Duration(milliseconds: 200),
-                                              decoration: BoxDecoration(
-                                                color: (isHovered || isRouteTarget)
-                                                    ? AppColors.primary.withOpacity(0.35)
-                                                    : Colors.transparent,
-                                                border: Border.all(
-                                                  color: isRouteTarget
-                                                      ? AppColors.accent
-                                                      : isHovered
-                                                          ? AppColors.primary
-                                                          : Colors.transparent,
-                                                  width: 2,
-                                                ),
-                                                borderRadius: BorderRadius.circular(2),
-                                              ),
-                                            ),
-                                          ),
-                                        ),
-                                      );
-                                    }),
-                                    if (_selectedRouteShop != null &&
-                                        _selectedRouteShop!.mapX != null &&
-                                        _selectedRouteShop!.mapY != null)
-                                      Positioned.fill(
-                                        child: CustomPaint(
-                                          painter: _RoutePainter(
-                                            from: Offset(
-                                              _entrancePosition.dx * renderedWidth,
-                                              _entrancePosition.dy * renderedHeight,
-                                            ),
-                                            to: Offset(
-                                              _selectedRouteShop!.mapX! * renderedWidth,
-                                              _selectedRouteShop!.mapY! * renderedHeight,
-                                            ),
-                                          ),
-                                        ),
-                                      ),
-                                  ],
-                                ),
-                              ),
-                            ),
-                          ),
-                        ),
-                        Positioned(
-                          right: 12,
-                          bottom: 12,
-                          child: Column(
-                            children: [
-                              Material(
-                                elevation: 3,
-                                borderRadius: BorderRadius.circular(10),
-                                color: Colors.white,
-                                child: InkWell(
-                                  borderRadius: BorderRadius.circular(10),
-                                  onTap: () {
-                                    final double currentScale = _mapTransformationController.value.getMaxScaleOnAxis();
-                                    final double newScale = (currentScale * 1.25).clamp(1.0, 4.0);
-                                    final Offset focal = Offset(mapWidth / 2, mapHeight / 2);
-                                    final Matrix4 matrix = _mapTransformationController.value;
-                                    final double oldScale = matrix.getMaxScaleOnAxis();
-                                    final Offset translation = Offset(matrix.storage[12], matrix.storage[13]);
-                                    final Offset contentPoint = (focal - translation) / oldScale;
-                                    final double tx = focal.dx - contentPoint.dx * newScale;
-                                    final double ty = focal.dy - contentPoint.dy * newScale;
-                                    _mapTransformationController.value = Matrix4.identity()
-                                      ..translate(tx, ty)
-                                      ..scale(newScale);
-                                    setState(() => _mapScale = newScale);
-                                  },
-                                  child: const SizedBox(
-                                    width: 42,
-                                    height: 42,
-                                    child: Icon(Icons.add, size: 22),
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(height: 6),
-                              Material(
-                                elevation: 3,
-                                borderRadius: BorderRadius.circular(10),
-                                color: Colors.white,
-                                child: InkWell(
-                                  borderRadius: BorderRadius.circular(10),
-                                  onTap: () {
-                                    final double currentScale = _mapTransformationController.value.getMaxScaleOnAxis();
-                                    final double newScale = (currentScale / 1.25).clamp(1.0, 4.0);
-                                    if (newScale == 1.0) {
-                                      _resetMapZoom();
-                                      return;
-                                    }
-                                    final Offset focal = Offset(mapWidth / 2, mapHeight / 2);
-                                    final Matrix4 matrix = _mapTransformationController.value;
-                                    final double oldScale = matrix.getMaxScaleOnAxis();
-                                    final Offset translation = Offset(matrix.storage[12], matrix.storage[13]);
-                                    final Offset contentPoint = (focal - translation) / oldScale;
-                                    final double tx = focal.dx - contentPoint.dx * newScale;
-                                    final double ty = focal.dy - contentPoint.dy * newScale;
-                                    _mapTransformationController.value = Matrix4.identity()
-                                      ..translate(tx, ty)
-                                      ..scale(newScale);
-                                    setState(() => _mapScale = newScale);
-                                  },
-                                  child: const SizedBox(
-                                    width: 42,
-                                    height: 42,
-                                    child: Icon(Icons.remove, size: 22),
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(height: 6),
-                              Material(
-                                elevation: 3,
-                                borderRadius: BorderRadius.circular(10),
-                                color: Colors.white,
-                                child: InkWell(
-                                  borderRadius: BorderRadius.circular(10),
-                                  onTap: _resetMapZoom,
-                                  child: const SizedBox(
-                                    width: 42,
-                                    height: 42,
-                                    child: Icon(Icons.refresh, size: 20),
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              );
-            },
-          ),
-        ),
-        if (_selectedRouteShop != null)
-          Padding(
-            padding: const EdgeInsets.only(top: 4),
-            child: TextButton.icon(
-              icon: const Icon(Icons.close, size: 16),
-              label: Text('Сбросить маршрут до ${_selectedRouteShop!.name}'),
-              onPressed: () {
-                setState(() {
-                  _selectedRouteShop = null;
-                  _hoveredShopId = null;
-                });
-              },
-            ),
-          ),
-        if (_selectedRouteShop != null)
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md, vertical: AppSpacing.sm),
-            child: AppCard(
-              color: AppColors.accentContainer,
-              child: Row(
-                children: [
-                  Text(_selectedRouteShop!.icon, style: const TextStyle(fontSize: 32)),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(_selectedRouteShop!.name, style: AppTextStyles.title),
-                        Text(_selectedRouteShop!.discount, style: AppTextStyles.bodyMedium),
-                      ],
-                    ),
-                  ),
-                  ElevatedButton(
-                    onPressed: () => _activateShop(_selectedRouteShop!),
-                    style: ElevatedButton.styleFrom(backgroundColor: AppColors.accent),
-                    child: const Text('В путь'),
-                  ),
-                ],
-              ),
-            ),
-          ),
-      ],
+  final mapUrl = _selectedMallMapUrl ?? '';
+  if (mapUrl.isEmpty) {
+    return const SizedBox(
+      height: 240,
+      child: Center(child: Text('Карта ТЦ ещё не загружена')),
     );
   }
+
+  // Берём только магазины с полностью заданной зоной: ниже координаты
+  // разыменовываются, и одного null достаточно, чтобы уронить экран.
+  final mallStores = _allShops
+      .where((s) =>
+          s.mapX != null &&
+          s.mapY != null &&
+          s.mapWidth != null &&
+          s.mapHeight != null &&
+          s.mapWidth! > 0 &&
+          s.mapHeight! > 0)
+      .map((s) {
+        final entry = (s.entryX != null && s.entryY != null)
+            ? Offset(s.entryX!, s.entryY!)
+            : null;
+
+        ShopZone? zone;
+        final polygonRaw = s.rawMapPolygon;
+        if (polygonRaw != null) {
+          zone = ShopZone.fromDb({
+            'map_polygon': polygonRaw,
+            'entry_x': s.entryX,
+            'entry_y': s.entryY,
+          });
+        }
+        // Полигон битый или его нет — падаем назад на прямоугольник.
+        zone ??= ShopZone.fromRect(
+          ShopZone.clampRectToUnit(Rect.fromCenter(
+            center: Offset(s.mapX!, s.mapY!),
+            width: s.mapWidth!,
+            height: s.mapHeight!,
+          )),
+          entry: entry,
+        );
+        return MallStore(id: s.id, name: s.name, zone: zone);
+      })
+      .toList();
+
+  return Padding(
+    padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
+    child: MallMapWidget(
+      mapImageUrl: mapUrl,
+      stores: mallStores,
+      entrancePosition: Offset(_mallEntranceX, _mallEntranceY),
+
+      // Реальные границы плана внутри PNG: строки 336..1183 из 1536 по
+      // высоте, вся ширина. Значение привязано к текущему afimall.png —
+      // при замене картинки пересчитать.
+      planBounds: const Rect.fromLTRB(0.0, 0.22, 1.0, 0.77),
+
+      selectedStoreId: _selectedRouteShop?.id,
+      highlightedStoreIds:
+          _pendingForkShops?.map((s) => s.id).toSet() ?? const {},
+      visitedStoreIds: _allVisitedShopIds,
+
+      // Превью-режим
+      interactive: false,
+      autoFrame: true,
+      showZoomControls: false,
+      height: 240,
+
+      // Тап по карте открывает полноэкранную вкладку «Карта»
+      onTapMap: () {
+        context.findAncestorStateOfType<_MainScreenState>()?.setTab(1);
+      },
+
+      // Коллбэки не нужны в превью, но оставим — на случай, если
+      // пользователь не закрыл полностью
+      onStoreSelected: (ms) {
+        final shop = _shopById[ms.id];
+        if (shop != null) setState(() => _selectedRouteShop = shop);
+      },
+      onSelectionCleared: () =>
+          setState(() => _selectedRouteShop = null),
+    ),
+  );
+}
 
   Future<void> _showLocationPicker({bool isChanging = false}) async {
   final Map<String, List<Map<String, String>>> citiesAndMalls = {
@@ -3664,11 +3431,6 @@ const SizedBox(height: AppSpacing.md),
   );
 }
 
-  void _resetMapZoom() {
-    _mapTransformationController.value = Matrix4.identity();
-    setState(() => _mapScale = 1.0);
-  }
-
   @override
   Widget build(BuildContext context) {
     if (_isLoading) {
@@ -3709,7 +3471,10 @@ const SizedBox(height: AppSpacing.md),
         ],
       ),
       body: SingleChildScrollView(
-        child: Column(
+  physics: _mapPanLocked
+      ? const NeverScrollableScrollPhysics()
+      : const ClampingScrollPhysics(),
+  child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Padding(
@@ -4898,28 +4663,6 @@ class _BannerImagePreviewState extends State<BannerImagePreview> {
   }
 }
 
-class _RoutePainter extends CustomPainter {
-  final Offset from;
-  final Offset to;
-  _RoutePainter({required this.from, required this.to});
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final paint = Paint()
-      ..color = AppColors.accent
-      ..strokeWidth = 3.0
-      ..style = PaintingStyle.stroke;
-    canvas.drawLine(from, to, paint);
-
-    final circlePaint = Paint()..color = AppColors.accent;
-    canvas.drawCircle(from, 6, circlePaint);
-    canvas.drawCircle(to, 6, circlePaint);
-  }
-
-  @override
-  bool shouldRepaint(covariant _RoutePainter oldDelegate) =>
-      oldDelegate.from != from || oldDelegate.to != to;
-} 
 class ShopXLogo extends StatelessWidget {
   final double fontSize;
   final Color? color;
