@@ -879,10 +879,38 @@ class _MapPainter extends CustomPainter {
     final zoneWidthPx = b.width * size.width * scale;
     final zoneHeightPx = b.height * size.height * scale;
 
-    if (zoneWidthPx < 24 || zoneHeightPx < 10) return;
+    // Во сколько «кеглей» вытянется название: 0.55em на символ — грубая,
+    // но достаточная оценка средней ширины глифа.
+    final nameSpan = math.max(name.length * 0.55, 3);
+    final maxFontByWidth = zoneWidthPx / nameSpan;
+    final maxFontByHeight = zoneHeightPx / nameSpan;
 
-    final maxFontByWidth = zoneWidthPx / math.max(name.length * 0.55, 3);
-    final fontSize = math.min(11.0, math.max(6.0, maxFontByWidth));
+    // Подпись поворачиваем в двух случаях: зона вытянута вверх, либо
+    // поперёк название не влезает, а вдоль влезает.
+    final bool vertical;
+    if (zoneHeightPx > zoneWidthPx * 1.1) {
+      vertical = true;
+    } else {
+      vertical = maxFontByWidth < 6.0 && maxFontByHeight >= 6.0;
+    }
+
+    // Дальше всё считаем от длины той оси, по которой пойдёт текст.
+    // Кегль берём от места, которое текст РЕАЛЬНО получит (минус отступы),
+    // иначе название шире выделенной ширины и ellipsis съедает символ.
+    final runPx = vertical ? zoneHeightPx : zoneWidthPx;
+    final fontSize = math.min(11.0, math.max(5.0, (runPx - 6) / nameSpan));
+    final labelMaxWidth = runPx / scale - _px(6);
+
+    // Видимость подписи зависит от зума: чем ближе, тем больше названий.
+    if (scale >= 2.0) {
+      // Приблизили — порог по размеру зоны снимаем, подписи нужны и у
+      // маленьких магазинов. Остаются два ограничения: читаемость шрифта
+      // и наличие места под текст (при отрицательной ширине падает layout).
+      if (fontSize < 5.0 || labelMaxWidth <= 0) return;
+    } else if (zoneWidthPx < 24 || zoneHeightPx < 10) {
+      // Общий вид — подписываем только крупные зоны, иначе каша.
+      return;
+    }
 
     final painter = TextPainter(
       text: TextSpan(
@@ -896,27 +924,28 @@ class _MapPainter extends CustomPainter {
       textDirection: TextDirection.ltr,
       maxLines: 1,
       ellipsis: '…',
-    )..layout(maxWidth: zoneWidthPx / scale - _px(6));
+    )..layout(maxWidth: labelMaxWidth);
 
     final anchor = Offset(
       zone.labelAnchor.dx * size.width,
       zone.labelAnchor.dy * size.height,
     );
 
-    final bg = Rect.fromCenter(
-      center: anchor,
-      width: painter.width + _px(6),
-      height: painter.height + _px(4),
-    );
+    // Только текст, без плашки. Центруем его по якорю зоны.
+    final textTopLeft = Offset(-painter.width / 2, -painter.height / 2);
 
-    if (fontSize >= 8) {
-      canvas.drawRRect(
-        RRect.fromRectAndRadius(bg, Radius.circular(_px(3))),
-        Paint()..color = Colors.white.withOpacity(0.85),
-      );
+    if (vertical) {
+      // Разворачиваем систему координат вокруг якоря — дальше рисуем ровно
+      // так же, как в горизонтальном случае, но уже от локального нуля.
+      canvas.save();
+      canvas.translate(anchor.dx, anchor.dy);
+      canvas.rotate(math.pi / 2);
+      painter.paint(canvas, textTopLeft);
+      canvas.restore();
+      return;
     }
 
-    painter.paint(canvas, bg.topLeft + Offset(_px(3), _px(2)));
+    painter.paint(canvas, anchor + textTopLeft);
   }
 
   // --- маршрут ------------------------------------------------------------
