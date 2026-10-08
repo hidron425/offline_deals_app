@@ -196,14 +196,23 @@ class _MallMapWidgetState extends State<MallMapWidget>
       _lastFrameKey = null;
       _resolveImageSize();
     }
-    // Сменилась цель маршрута или точка старта — пересчитать кадр превью.
-    // Список магазинов пересобирается на каждый build родителя, поэтому в
-    // условие он не входит: смена состава зон меняет размер холста, а это
-    // уже ловится в build.
+    // Сменилась цель маршрута, развилка или точка старта — пересчитать кадр
+    // превью. Список магазинов пересобирается на каждый build родителя,
+    // поэтому в условие он не входит: смена состава зон меняет размер
+    // холста, а это уже ловится в build.
+    //
+    // Set не переопределяет ==, а родитель каждый build создаёт новый,
+    // поэтому сравниваем по содержимому: иначе кадр пересчитывался бы
+    // на каждую перерисовку.
+    final highlightChanged = old.highlightedStoreIds.length !=
+            widget.highlightedStoreIds.length ||
+        !old.highlightedStoreIds.containsAll(widget.highlightedStoreIds);
+
     if (old.selectedStoreId != widget.selectedStoreId ||
         old.entrancePosition != widget.entrancePosition ||
         old.userPosition != widget.userPosition ||
-        old.planBounds != widget.planBounds) {
+        old.planBounds != widget.planBounds ||
+        highlightChanged) {
       _lastFrameKey = null;
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) _applyAutoFrame(_lastCanvasSize);
@@ -323,19 +332,63 @@ class _MallMapWidgetState extends State<MallMapWidget>
     return (cardLen / 2 - target).clamp(cardLen - contentMax, -contentMin);
   }
 
-  /// Кадрирует превью.
+  /// Цели подсвеченных магазинов (две ветки развилки) в координатах холста.
+  /// id, которых нет в [MallMapWidget.stores], пропускаем.
+  List<Offset> _highlightedDestinations(Size canvas) {
+    if (widget.highlightedStoreIds.isEmpty) return const [];
+    return [
+      for (final store in widget.stores)
+        if (widget.highlightedStoreIds.contains(store.id))
+          _toCanvas(store.zone.destination, canvas),
+    ];
+  }
+
+  /// Кадр по набору точек: их bbox плюс запас, и зум «чтобы влезло целиком».
+  /// Одна формула и для маршрута, и для развилки — чтобы они не разъехались.
+  ({double scale, Offset target}) _frameForPoints(
+      List<Offset> points, Size canvas) {
+    var box = Rect.fromPoints(points.first, points.first);
+    for (final p in points.skip(1)) {
+      box = box.expandToInclude(Rect.fromPoints(p, p));
+    }
+
+    final pad = math.max(40.0, math.max(box.width, box.height) * 0.25);
+    // Сверху запас больше: булавка маркера рисуется НАД точкой.
+    final frame = Rect.fromLTRB(
+      box.left - pad,
+      box.top - pad - _markerHeight,
+      box.right + pad,
+      box.bottom + pad,
+    ).intersect(Offset.zero & canvas);
+
+    // Кадр обрезан по холсту, поэтому масштаб «чтобы влез целиком»
+    // всегда >= 1: все точки гарантированно в кадре.
+    final double scale = math
+        .min(canvas.width / math.max(frame.width, 1.0),
+            canvas.height / math.max(frame.height, 1.0))
+        .clamp(widget.minScale, math.min(3.0, widget.maxScale))
+        .toDouble();
+    return (scale: scale, target: frame.center);
+  }
+
+  /// Кадрирует превью. Три случая, в порядке приоритета:
   ///
-  /// Магазин не выбран — центрируемся на входе в ТЦ с фиксированным зумом
-  /// [_entranceZoom]: превью отвечает «откуда я начинаю и что рядом».
-  /// Магазин выбран — показываем маршрут: кадр вокруг входа и двери
-  /// магазина с запасом, зум подбираем так, чтобы влезли оба маркера.
+  ///   1. Открыта развилка (есть highlightedStoreIds) — в кадре вход и ОБА
+  ///      варианта: выбор важнее заполнения карточки, поэтому зум может
+  ///      упасть почти до 1.0 и показать больше плана.
+  ///   2. Выбран магазин — показываем маршрут: вход и дверь магазина.
+  ///   3. Ничего не выбрано — центр на входе с фиксированным зумом
+  ///      [_entranceZoom]: превью отвечает «откуда я начинаю и что рядом».
   void _applyAutoFrame(Size canvas) {
     if (!widget.autoFrame || canvas.isEmpty) return;
 
     final entrance = widget.userPosition ?? widget.entrancePosition;
     final selected = _selectedStore;
+    final highlighted = _highlightedDestinations(canvas);
 
+    final highlightKey = (widget.highlightedStoreIds.toList()..sort()).join(',');
     final key = '${widget.mapImageUrl}|${selected?.id ?? "none"}'
+        '|$highlightKey'
         '|${canvas.width.round()}x${canvas.height.round()}'
         '|${entrance.dx.toStringAsFixed(3)},${entrance.dy.toStringAsFixed(3)}';
     if (key == _lastFrameKey) return;
@@ -343,30 +396,28 @@ class _MallMapWidgetState extends State<MallMapWidget>
 
     final double scale;
     final Offset target;
-    if (selected == null) {
+    if (highlighted.isNotEmpty) {
+      // Развилка. С одной найденной зоной bbox совпадает с маршрутным —
+      // формула та же, поэтому отдельный случай не нужен.
+      final frame = _frameForPoints(
+        [_toCanvas(entrance, canvas), ...highlighted],
+        canvas,
+      );
+      scale = frame.scale;
+      target = frame.target;
+    } else if (selected == null) {
       scale = _entranceZoom.clamp(widget.minScale, widget.maxScale);
       target = _toCanvas(entrance, canvas);
     } else {
-      final box = Rect.fromPoints(
-        _toCanvas(entrance, canvas),
-        _toCanvas(selected.zone.destination, canvas),
+      final frame = _frameForPoints(
+        [
+          _toCanvas(entrance, canvas),
+          _toCanvas(selected.zone.destination, canvas),
+        ],
+        canvas,
       );
-      final pad = math.max(40.0, math.max(box.width, box.height) * 0.25);
-      // Сверху запас больше: булавка маркера рисуется НАД точкой.
-      final frame = Rect.fromLTRB(
-        box.left - pad,
-        box.top - pad - _markerHeight,
-        box.right + pad,
-        box.bottom + pad,
-      ).intersect(Offset.zero & canvas);
-
-      // Кадр обрезан по холсту, поэтому масштаб «чтобы влез целиком»
-      // всегда >= 1: оба маркера гарантированно в кадре.
-      scale = math
-          .min(canvas.width / math.max(frame.width, 1.0),
-              canvas.height / math.max(frame.height, 1.0))
-          .clamp(widget.minScale, math.min(3.0, widget.maxScale));
-      target = frame.center;
+      scale = frame.scale;
+      target = frame.target;
     }
 
     // Границы плана на экране: по ним камера и упирается.
