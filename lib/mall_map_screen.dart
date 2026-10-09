@@ -470,64 +470,84 @@ class _MallMapScreenState extends State<MallMapScreen> {
     final height =
         math.min(MediaQuery.of(context).size.height * 0.3, 240.0);
 
-    return Container(
-      height: height,
-      decoration: const BoxDecoration(
-        color: AppColors.surface,
-        border: Border(top: BorderSide(color: AppColors.border)),
-      ),
-      child: ListView.separated(
-        padding: const EdgeInsets.symmetric(vertical: AppSpacing.sm),
-        itemCount: shops.length,
-        separatorBuilder: (_, _) => const Divider(
-          height: 1,
-          indent: AppSpacing.md,
-          endIndent: AppSpacing.md,
+    // Material, а не просто Container с цветом: без Material-предка
+    // ListTile не может нарисовать ни фон выделения, ни ink-всплеск
+    // (в консоли — «background color or ink splashes may be invisible»).
+    return Material(
+      color: AppColors.surface,
+      child: Container(
+        height: height,
+        decoration: const BoxDecoration(
+          border: Border(top: BorderSide(color: AppColors.border)),
         ),
-        itemBuilder: (context, index) {
-          final shop = shops[index];
-          // В карточке магазина коротая скидка информативнее полной.
-          final subtitle = shop.shortDiscount.isNotEmpty
-              ? shop.shortDiscount
-              : shop.discount;
+        child: ListView.separated(
+          padding: const EdgeInsets.symmetric(vertical: AppSpacing.sm),
+          itemCount: shops.length,
+          separatorBuilder: (_, _) => const Divider(
+            height: 1,
+            indent: AppSpacing.md,
+            endIndent: AppSpacing.md,
+          ),
+          itemBuilder: (context, index) {
+            final shop = shops[index];
+            // В карточке магазина коротая скидка информативнее полной.
+            final subtitle = shop.shortDiscount.isNotEmpty
+                ? shop.shortDiscount
+                : shop.discount;
 
-          return ListTile(
-            dense: true,
-            selected: shop.id == _selectedStoreId,
-            selectedTileColor: AppColors.primaryContainer,
-            contentPadding:
-                const EdgeInsets.symmetric(horizontal: AppSpacing.md),
-            leading: CircleAvatar(
-              radius: 18,
-              backgroundColor: AppColors.surfaceVariant,
-              // foregroundImage: если картинка не загрузилась, остаётся
-              // child-иконка, а не пустой кружок.
-              foregroundImage:
-                  shop.imageUrl.isEmpty ? null : NetworkImage(shop.imageUrl),
-              child: const Icon(Icons.store,
-                  size: 18, color: AppColors.textSecondary),
-            ),
-            title: Text(
-              shop.name,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                  fontSize: 14, fontWeight: FontWeight.w600),
-            ),
-            subtitle: subtitle.isEmpty
-                ? null
-                : Text(
-                    subtitle,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                        fontSize: 12, color: AppColors.textSecondary),
-                  ),
-            // Тап строки открывает карточку магазина с маршрутом. Диалог
-            // _showShopInfo остаётся на тапе по зоне самой карты.
-            onTap: () => _openShopDetail(shop),
-          );
-        },
+            return ListTile(
+              dense: true,
+              selected: shop.id == _selectedStoreId,
+              selectedTileColor: AppColors.primaryContainer,
+              contentPadding:
+                  const EdgeInsets.symmetric(horizontal: AppSpacing.md),
+              // foregroundImage здесь не годится: он рисуется ПОВЕРХ child,
+              // и через прозрачный фон логотипа просвечивает иконка-заглушка.
+              // Поэтому либо иконка, либо картинка — но не вместе.
+              leading: CircleAvatar(
+                radius: 18,
+                backgroundColor: AppColors.surfaceVariant,
+                child: shop.imageUrl.isEmpty
+                    ? const Icon(Icons.store,
+                        size: 18, color: AppColors.textSecondary)
+                    : ClipOval(
+                        child: Image.network(
+                          shop.imageUrl,
+                          width: 36,
+                          height: 36,
+                          // contain, а не cover: у логотипов прозрачный фон,
+                          // и cover обрезал бы квадратные марки по краям.
+                          fit: BoxFit.contain,
+                          errorBuilder: (_, _, _) => const Icon(
+                            Icons.store,
+                            size: 18,
+                            color: AppColors.textSecondary,
+                          ),
+                        ),
+                      ),
+              ),
+              title: Text(
+                shop.name,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                    fontSize: 14, fontWeight: FontWeight.w600),
+              ),
+              subtitle: subtitle.isEmpty
+                  ? null
+                  : Text(
+                      subtitle,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                          fontSize: 12, color: AppColors.textSecondary),
+                    ),
+              // Тап строки открывает карточку магазина с маршрутом. Диалог
+              // _showShopInfo остаётся на тапе по зоне самой карты.
+              onTap: () => _openShopDetail(shop),
+            );
+          },
+        ),
       ),
     );
   }

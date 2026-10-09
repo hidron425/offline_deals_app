@@ -473,13 +473,26 @@ class _MallMapWidgetState extends State<MallMapWidget>
   Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (context, constraints) {
-        final width = math.min(
+        final maxW = math.min(
           constraints.maxWidth.isFinite ? constraints.maxWidth : widget.maxWidth,
           widget.maxWidth,
         );
+        final maxH = constraints.maxHeight.isFinite
+            ? constraints.maxHeight
+            : double.infinity;
+
         // Холст совпадает с карточкой: height, если задана, иначе высота
         // по пропорциям плана. Кадрированием занимается _applyAutoFrame.
-        final canvas = Size(width, widget.height ?? width / _aspectRatio);
+        //
+        // Высоту считаем от ширины, но не даём ей превысить то, что дал
+        // родитель. Иначе при открытой клавиатуре слот сжимается, Container
+        // зажимается констрейнтами до реальной высоты, а canvas остаётся
+        // прежней — и _MapPainter рисует зоны по одной геометрии, а
+        // картинка вписывается в другую. Ниже всё — отрисовка, хит-тест,
+        // _toCanvas, авто-кадр — считает от ЭТОГО значения.
+        final natural = widget.height ?? maxW / _aspectRatio;
+        final canvasH = math.min(natural, maxH);
+        final canvas = Size(maxW, canvasH);
 
         // Размер поменялся (поворот, ресайз окна) — кадр пересчитываем.
         // Ручной зум не сбрасываем: ключ внутри _applyAutoFrame не

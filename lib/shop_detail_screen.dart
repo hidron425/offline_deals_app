@@ -142,16 +142,30 @@ class _ShopDetailScreenState extends State<ShopDetailScreen> {
             padding: const EdgeInsets.all(AppSpacing.md),
             child: Row(
               children: [
+                // foregroundImage рисуется ПОВЕРХ child, и через
+                // прозрачный фон логотипа просвечивает иконка-заглушка.
+                // Поэтому либо иконка, либо картинка — но не вместе.
                 CircleAvatar(
                   radius: 32,
                   backgroundColor: AppColors.surfaceVariant,
-                  // foregroundImage: не загрузилась картинка — остаётся
-                  // иконка, а не пустой кружок.
-                  foregroundImage: shop.imageUrl.isEmpty
-                      ? null
-                      : NetworkImage(shop.imageUrl),
-                  child: const Icon(Icons.store,
-                      size: 28, color: AppColors.textSecondary),
+                  child: shop.imageUrl.isEmpty
+                      ? const Icon(Icons.store,
+                          size: 28, color: AppColors.textSecondary)
+                      : ClipOval(
+                          child: Image.network(
+                            shop.imageUrl,
+                            width: 64,
+                            height: 64,
+                            // contain: у логотипов прозрачный фон, cover
+                            // обрезал бы квадратные марки по краям.
+                            fit: BoxFit.contain,
+                            errorBuilder: (_, _, _) => const Icon(
+                              Icons.store,
+                              size: 28,
+                              color: AppColors.textSecondary,
+                            ),
+                          ),
+                        ),
                 ),
                 const SizedBox(width: AppSpacing.md),
                 Expanded(
