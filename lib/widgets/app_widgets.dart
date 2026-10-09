@@ -20,23 +20,50 @@ class AppCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final content = Container(
+    // Без onTap — ровно то же дерево, что и было: один Container со всем
+    // оформлением. Ink-слой здесь не нужен, значит и платить за него нечем.
+    if (onTap == null) {
+      return Container(
+        margin: margin,
+        padding: padding,
+        decoration: BoxDecoration(
+          color: color ?? AppColors.surface,
+          borderRadius: BorderRadius.circular(AppRadius.lg),
+          border: Border.all(color: AppColors.border, width: 1),
+          boxShadow: AppShadows.card,
+        ),
+        child: child,
+      );
+    }
+
+    // С onTap оформление делится на два слоя. Внешний Container несёт
+    // только тень (и радиус, по которому она строится), фон и рамку
+    // забирает Material. Иначе InkWell рисует всплеск на Material
+    // Scaffold'а — то есть ПОД непрозрачной подложкой карточки, и его
+    // просто не видно.
+    return Container(
       margin: margin,
-      padding: padding,
       decoration: BoxDecoration(
-        color: color ?? AppColors.surface,
         borderRadius: BorderRadius.circular(AppRadius.lg),
-        border: Border.all(color: AppColors.border, width: 1),
         boxShadow: AppShadows.card,
       ),
-      child: child,
-    );
-
-    if (onTap == null) return content;
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(AppRadius.lg),
-      child: content,
+      child: Material(
+        color: color ?? AppColors.surface,
+        // shape, а не borderRadius: Material не умеет border, а рамку
+        // нужно сохранить ровно такой же — 1px AppColors.border.
+        shape: RoundedRectangleBorder(
+          side: const BorderSide(color: AppColors.border, width: 1),
+          borderRadius: BorderRadius.circular(AppRadius.lg),
+        ),
+        // Всплеск не должен вылезать за скруглённые углы.
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: onTap,
+          // padding внутри InkWell: всплеск покрывает и отступы, иначе
+          // края карточки на тап не реагируют подсветкой.
+          child: Padding(padding: padding, child: child),
+        ),
+      ),
     );
   }
 }

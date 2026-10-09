@@ -14,6 +14,7 @@
 
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart' show ValueListenable;
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart' as supa;
 
@@ -30,9 +31,14 @@ class MallMapScreen extends StatefulWidget {
   /// вкладка состоянием квеста не владеет.
   final void Function(Shop shop)? onStartQuestFromShop;
 
+  /// Посещённые магазины. Множество принадлежит вкладке «Акции», сюда
+  /// приходит только для чтения. null — подсветку посещённых не рисуем.
+  final ValueListenable<Set<String>>? visitedStoreIds;
+
   const MallMapScreen({
     super.key,
     this.onStartQuestFromShop,
+    this.visitedStoreIds,
   });
 
   @override
@@ -438,6 +444,21 @@ class _MallMapScreenState extends State<MallMapScreen> {
         ? const <String>{}
         : filtered.map((s) => s.id).toSet();
 
+    // Посещённые приходят из вкладки «Акции» и меняются на ходу, поэтому
+    // перестраиваем только карту, а не весь экран с фильтрами и списком.
+    final visitedListenable = widget.visitedStoreIds;
+    if (visitedListenable == null) {
+      return _buildMapCard(url, highlighted, const <String>{});
+    }
+    return ValueListenableBuilder<Set<String>>(
+      valueListenable: visitedListenable,
+      builder: (context, visited, _) =>
+          _buildMapCard(url, highlighted, visited),
+    );
+  }
+
+  Widget _buildMapCard(
+      String url, Set<String> highlighted, Set<String> visited) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: AppSpacing.sm),
       child: MallMapWidget(
@@ -449,9 +470,7 @@ class _MallMapScreenState extends State<MallMapScreen> {
         // Выбор магазина ведёт маршрут от входа; по умолчанию не выбран.
         selectedStoreId: _selectedStoreId,
         highlightedStoreIds: highlighted,
-        // Посещённые зоны живут в состоянии главного экрана; сюда их
-        // прокинуть без общего хранилища нельзя.
-        visitedStoreIds: const <String>{},
+        visitedStoreIds: visited,
 
         // Полноэкранный режим: камерой управляет пользователь.
         interactive: true,
@@ -574,7 +593,9 @@ class _MallMapScreenState extends State<MallMapScreen> {
           stores: _stores,
           entrancePosition: _entrance,
           planBounds: _planBounds,
-          visitedStoreIds: const <String>{},
+          // Снимок на момент открытия: страница магазина живёт недолго и
+          // пересчитывать посещённые на ходу ей не нужно.
+          visitedStoreIds: widget.visitedStoreIds?.value ?? const <String>{},
           onStartQuestFromShop: widget.onStartQuestFromShop,
         ),
       ),

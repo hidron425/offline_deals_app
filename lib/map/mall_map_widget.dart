@@ -546,6 +546,14 @@ class _MallMapWidgetState extends State<MallMapWidget>
     final userPoint =
         _toCanvas(widget.userPosition ?? widget.entrancePosition, canvas);
 
+    // Считаем один раз: нужен только слою маршрута.
+    final routePoints = (widget.showRoute && selected != null)
+        ? _routeWaypoints(
+            userPoint,
+            _toCanvas(selected.zone.destination, canvas),
+          )
+        : null;
+
     final content = SizedBox(
       width: canvas.width,
       height: canvas.height,
@@ -561,7 +569,8 @@ class _MallMapWidgetState extends State<MallMapWidget>
             ),
           ),
 
-          // 2 + 3. Зоны и маршрут
+          // 2. Зоны и подписи — статический слой. Перерисовывается только
+          //    когда реально меняются его входные данные.
           Positioned.fill(
             child: RepaintBoundary(
               child: CustomPaint(
@@ -572,12 +581,21 @@ class _MallMapWidgetState extends State<MallMapWidget>
                   highlightedIds: widget.highlightedStoreIds,
                   style: widget.style,
                   scale: _scale,
-                  route: (widget.showRoute && selected != null)
-                      ? _routeWaypoints(
-                          userPoint,
-                          _toCanvas(selected.zone.destination, canvas),
-                        )
-                      : null,
+                ),
+              ),
+            ),
+          ),
+
+          // 3. Маршрут — отдельный слой, он один анимируется пульсом.
+          //    Порядок тот же, что раньше внутри одного paint(): маршрут
+          //    поверх зон и подписей, но под маркерами.
+          Positioned.fill(
+            child: RepaintBoundary(
+              child: CustomPaint(
+                painter: _RoutePainter(
+                  route: routePoints,
+                  scale: _scale,
+                  routeColor: widget.style.route,
                   animation: _pulse,
                 ),
               ),
@@ -843,6 +861,10 @@ class _MallMapWidgetState extends State<MallMapWidget>
 // Отрисовка зон и маршрута
 // ===========================================================================
 
+/// Статический слой: зоны и подписи. Намеренно БЕЗ animation и без
+/// super(repaint:) — иначе весь слой (включая 90 подписей) перерисовывался
+/// бы на каждый тик пульса, минуя shouldRepaint. Маршрут живёт отдельно,
+/// в [_RoutePainter].
 class _MapPainter extends CustomPainter {
   final List<MallStore> stores;
   final String? selectedId;
@@ -850,8 +872,6 @@ class _MapPainter extends CustomPainter {
   final Set<String> highlightedIds;
   final MallMapStyle style;
   final double scale;
-  final List<Offset>? route;
-  final Animation<double> animation;
 
   _MapPainter({
     required this.stores,
@@ -860,9 +880,7 @@ class _MapPainter extends CustomPainter {
     required this.highlightedIds,
     required this.style,
     required this.scale,
-    required this.route,
-    required this.animation,
-  }) : super(repaint: animation);
+  });
 
   /// Ширина слова в кеглях (em), ЗАМЕРЕННАЯ, а не оценённая по числу
   /// символов: у «M», «W», «Ш» глиф доходит до 0.9em, из-за чего слово не
@@ -940,8 +958,6 @@ class _MapPainter extends CustomPainter {
 
       _paintLabel(canvas, size, store.zone, store.name);
     }
-
-    if (route != null && route!.length >= 2) _paintRoute(canvas);
   }
 
   // --- подписи ------------------------------------------------------------
@@ -1308,16 +1324,46 @@ class _MapPainter extends CustomPainter {
     painter.paint(canvas, anchor + textTopLeft);
   }
 
-  // --- маршрут ------------------------------------------------------------
+  @override
+  bool shouldRepaint(covariant _MapPainter old) =>
+      old.stores != stores ||
+      old.selectedId != selectedId ||
+      old.visitedIds != visitedIds ||
+      old.highlightedIds != highlightedIds ||
+      old.scale != scale;
+}
 
-  void _paintRoute(Canvas canvas) {
+/// Динамический слой: только пунктирный маршрут. Он единственный, кому
+/// нужен пульс, поэтому super(repaint:) остаётся здесь — перерисовка
+/// кадр в кадр стоит одну ломаную, а не 90 TextPainter'ов.
+class _RoutePainter extends CustomPainter {
+  final List<Offset>? route;
+  final double scale;
+  final Color routeColor;
+  final Animation<double> animation;
+
+  _RoutePainter({
+    required this.route,
+    required this.scale,
+    required this.routeColor,
+    required this.animation,
+  }) : super(repaint: animation);
+
+  /// Тот же пересчёт экранных пикселей в холстовые, что и у _MapPainter.
+  double _px(double screenPx) => screenPx / scale;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final pts = route;
+    if (pts == null || pts.length < 2) return;
+
     final t = animation.value;
     final dash = _px(12);
     final gap = _px(9);
     final phase = t * (dash + gap);
     final opacity = 0.45 + 0.55 * (0.5 + 0.5 * math.sin(t * 2 * math.pi));
 
-    final dashed = _dash(_routePath(), dash: dash, gap: gap, phase: phase);
+    final dashed = _dash(_routePath(pts), dash: dash, gap: gap, phase: phase);
 
     canvas.drawPath(
       dashed,
@@ -1330,17 +1376,16 @@ class _MapPainter extends CustomPainter {
     canvas.drawPath(
       dashed,
       Paint()
-        ..color = style.route.withOpacity(opacity)
+        ..color = routeColor.withOpacity(opacity)
         ..style = PaintingStyle.stroke
         ..strokeWidth = _px(5)
         ..strokeCap = StrokeCap.round,
     );
-    canvas.drawCircle(route!.first, _px(5),
-        Paint()..color = style.route.withOpacity(opacity));
+    canvas.drawCircle(
+        pts.first, _px(5), Paint()..color = routeColor.withOpacity(opacity));
   }
 
-  Path _routePath() {
-    final pts = route!;
+  Path _routePath(List<Offset> pts) {
     final path = Path()..moveTo(pts.first.dx, pts.first.dy);
     final radius = _px(18);
     for (var i = 1; i < pts.length; i++) {
@@ -1383,13 +1428,8 @@ class _MapPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(covariant _MapPainter old) =>
-      old.stores != stores ||
-      old.selectedId != selectedId ||
-      old.visitedIds != visitedIds ||
-      old.highlightedIds != highlightedIds ||
-      old.scale != scale ||
-      old.route != route;
+  bool shouldRepaint(covariant _RoutePainter old) =>
+      old.route != route || old.scale != scale;
 }
 
 class _PinTailPainter extends CustomPainter {

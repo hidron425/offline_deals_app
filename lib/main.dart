@@ -292,14 +292,29 @@ class _MainScreenState extends State<MainScreen> {
   final GlobalKey<DealsGameScreenState> _questKey =
       GlobalKey<DealsGameScreenState>();
 
+  /// Посещённые магазины. Множество живёт в состоянии вкладки «Акции», а
+  /// владеет нотифаером MainScreen: так «Карта» читает его, не завязываясь
+  /// на чужое состояние и не перестраивая квест.
+  final ValueNotifier<Set<String>> _visitedShopIds =
+      ValueNotifier(const <String>{});
+
   @override
   void initState() {
     super.initState();
     _screens = [
-      DealsGameScreen(key: _questKey),
-      MallMapScreen(onStartQuestFromShop: _handleStartQuestFromShop),
+      DealsGameScreen(key: _questKey, visitedShopIdsOut: _visitedShopIds),
+      MallMapScreen(
+        onStartQuestFromShop: _handleStartQuestFromShop,
+        visitedStoreIds: _visitedShopIds,
+      ),
       const ProfileScreen(),
     ];
+  }
+
+  @override
+  void dispose() {
+    _visitedShopIds.dispose();
+    super.dispose();
   }
 
   void setTab(int index) {
@@ -1464,7 +1479,11 @@ class _ChoiceButtonState extends State<_ChoiceButton> {
 
 // ----- ГЛАВНЫЙ ИГРОВОЙ ЭКРАН -----
 class DealsGameScreen extends StatefulWidget {
-  const DealsGameScreen({super.key});
+  /// Куда зеркалить множество посещённых магазинов, чтобы его увидели
+  /// другие вкладки. null — никто не слушает.
+  final ValueNotifier<Set<String>>? visitedShopIdsOut;
+
+  const DealsGameScreen({super.key, this.visitedShopIdsOut});
 
   @override
   State<DealsGameScreen> createState() => DealsGameScreenState();
@@ -1475,6 +1494,13 @@ class DealsGameScreen extends StatefulWidget {
 class DealsGameScreenState extends State<DealsGameScreen> {
   /// Открыто наружу: другие вкладки проверяют, идёт ли сейчас путь.
   bool get isPathActive => _isPathActive;
+
+  /// Публикует снимок посещённых магазинов наружу. Логику самого
+  /// множества не меняет — только отдаёт копию слушателям.
+  void _publishVisited() {
+    widget.visitedShopIdsOut?.value =
+        Set<String>.unmodifiable(_allVisitedShopIds);
+  }
 
   /// Открыто наружу: запускает активацию магазина так же, как тап по зоне
   /// на главном экране квеста.
@@ -1708,6 +1734,7 @@ void initState() {
       _favoriteShops = favList.toSet();
       final visitedAll = List<String>.from(data['all_visited_shop_ids'] ?? []);
       _allVisitedShopIds = visitedAll.toSet();
+      _publishVisited();
       _lastCafeDate = data['last_cafe_date'] as String?;
       _lastElectronicsDate = data['last_electronics_date'] as String?;
       final pendingIds = List<String>.from(data['pending_fork_shops'] ?? []);
@@ -1767,6 +1794,7 @@ void initState() {
       _cycleCount = 0;
       _usedShopIds.clear();
       _allVisitedShopIds.clear();
+      _publishVisited();
       _favoriteShops.clear();
       _selectedCity = null;
       _selectedMall = null;
@@ -1812,6 +1840,7 @@ void initState() {
   setState(() {
     _completedSteps = 0;
     _allVisitedShopIds.clear();
+    _publishVisited();
     _usedShopIds.clear();
     _favoriteShops.clear();        // ← добавили
     _isPathActive = false;
@@ -2816,6 +2845,7 @@ Expanded(
 
   // Локально отмечаем ДО вставки в sales, чтобы не потерять при ошибке
   _allVisitedShopIds.add(shop.id);
+  _publishVisited();
 
   await _sb.from('sales').insert({
     'shop_id': shop.id,
