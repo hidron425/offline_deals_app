@@ -354,6 +354,8 @@ class _MallMapScreenState extends State<MallMapScreen> {
   }
 
   Widget _buildFilters() {
+    // ВРЕМЕННО: диагностика «залипания» фильтров. Убрать после починки.
+    debugPrint('[KARTA] buildFilters, _category=$_category, _search="$_search"');
     final categories = _categories;
 
     return Column(
@@ -365,7 +367,11 @@ class _MallMapScreenState extends State<MallMapScreen> {
           child: TextField(
             controller: _searchCtrl,
             textInputAction: TextInputAction.search,
-            onChanged: (v) => setState(() => _search = v),
+            onChanged: (v) {
+              // ВРЕМЕННО: диагностика. Убрать после починки.
+              debugPrint('[KARTA] search onChanged: $v');
+              setState(() => _search = v);
+            },
             decoration: InputDecoration(
               hintText: 'Поиск магазина',
               prefixIcon: const Icon(Icons.search),
@@ -407,8 +413,13 @@ class _MallMapScreenState extends State<MallMapScreen> {
                       // Выбор строго один: повторный тап по активному чипу
                       // возвращает «Все».
                       selected: _category == c,
-                      onSelected: (_) => setState(
-                          () => _category = _category == c ? _anyCategory : c),
+                      onSelected: (_) {
+                        // ВРЕМЕННО: диагностика. Убрать после починки.
+                        debugPrint(
+                            '[KARTA] chip tapped: $c, current _category=$_category');
+                        setState(
+                            () => _category = _category == c ? _anyCategory : c);
+                      },
                     ),
                   ),
               ],
