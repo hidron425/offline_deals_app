@@ -533,113 +533,131 @@ class _MallMapWidgetState extends State<MallMapWidget>
     final userPoint =
         _toCanvas(widget.userPosition ?? widget.entrancePosition, canvas);
 
-    // В превью кадрирование делает _applyAutoFrame; в интерактиве
-    // пользователь сам рулит — матрицу не трогаем.
-    final panEnabled = widget.interactive && _scale > 1.01;
-    final scaleEnabled = widget.interactive &&
-        (!kIsWeb || _wheelZoomArmed || _scale > 1.01);
+    final content = SizedBox(
+      width: canvas.width,
+      height: canvas.height,
+      child: Stack(
+        children: [
+          // 1. План этажа
+          Positioned.fill(
+            child: Image.network(
+              widget.mapImageUrl,
+              fit: BoxFit.fill,
+              filterQuality: FilterQuality.medium,
+              errorBuilder: (_, __, ___) => _buildImageError(),
+            ),
+          ),
 
+          // 2 + 3. Зоны и маршрут
+          Positioned.fill(
+            child: RepaintBoundary(
+              child: CustomPaint(
+                painter: _MapPainter(
+                  stores: widget.stores,
+                  selectedId: widget.selectedStoreId,
+                  visitedIds: widget.visitedStoreIds,
+                  highlightedIds: widget.highlightedStoreIds,
+                  style: widget.style,
+                  scale: _scale,
+                  route: (widget.showRoute && selected != null)
+                      ? _routeWaypoints(
+                          userPoint,
+                          _toCanvas(selected.zone.destination, canvas),
+                        )
+                      : null,
+                  animation: _pulse,
+                ),
+              ),
+            ),
+          ),
+
+          // Семантика для screen reader'ов
+          ...widget.stores.map((store) {
+            final b = store.zone.bounds;
+            return Positioned(
+              left: b.left * canvas.width,
+              top: b.top * canvas.height,
+              width: b.width * canvas.width,
+              height: b.height * canvas.height,
+              child: Semantics(
+                button: true,
+                label: store.name,
+                onTap: () => widget.onStoreSelected?.call(store),
+                child: const SizedBox.expand(),
+              ),
+            );
+          }),
+
+          // Слой жестов: без hover, с поддержкой onTapMap.
+          Positioned.fill(
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTapUp: (details) {
+                // Превью: тап по карте открывает полную карту.
+                if (widget.onTapMap != null) {
+                  widget.onTapMap!();
+                  return;
+                }
+                if (kIsWeb && !_wheelZoomArmed) {
+                  setState(() => _wheelZoomArmed = true);
+                }
+                final store = _storeAt(details.localPosition, canvas);
+                store != null
+                    ? widget.onStoreSelected?.call(store)
+                    : widget.onSelectionCleared?.call();
+              },
+            ),
+          ),
+
+          // 4. Маркеры
+          if (selected != null)
+            _buildMarker(
+              point: _toCanvas(selected.zone.destination, canvas),
+              icon: Icons.flag_rounded,
+              color: widget.style.destinationMarker,
+              tooltip: selected.name,
+            ),
+          _buildUserHalo(userPoint),
+          _buildMarker(
+            point: userPoint,
+            icon: Icons.directions_walk_rounded,
+            color: widget.style.userMarker,
+            tooltip: 'Вы здесь',
+          ),
+        ],
+      ),
+    );
+
+    // Превью: InteractiveViewer не ставим вовсе. Даже с panEnabled: false
+    // он забирает вертикальный drag, и родительский SingleChildScrollView
+    // не может продолжить скролл за карточкой — страница «залипает».
+    //
+    // Матрицу при этом применяем сами: кадрированием превью занимается
+    // _applyAutoFrame, и без неё карточка показала бы весь PNG без зума, да
+    // ещё с подписями, посчитанными на _scale от кадра. Тап по карте ловит
+    // GestureDetector внутри Stack (onTapMap) — он остаётся на месте.
+    if (!widget.interactive) {
+      return ClipRect(
+        child: ValueListenableBuilder<Matrix4>(
+          valueListenable: _controller,
+          builder: (context, matrix, child) =>
+              Transform(transform: matrix, child: child),
+          child: content,
+        ),
+      );
+    }
+
+    // Интерактив: пользователь сам рулит камерой. Проверки на
+    // widget.interactive в panEnabled/scaleEnabled больше не нужны —
+    // до этой строки доходит только интерактивный режим.
     return InteractiveViewer(
       transformationController: _controller,
       minScale: widget.minScale,
       maxScale: widget.maxScale,
-      panEnabled: panEnabled,
-      scaleEnabled: scaleEnabled,
+      panEnabled: _scale > 1.01,
+      scaleEnabled: !kIsWeb || _wheelZoomArmed || _scale > 1.01,
       clipBehavior: Clip.hardEdge,
-      child: SizedBox(
-        width: canvas.width,
-        height: canvas.height,
-        child: Stack(
-          children: [
-            // 1. План этажа
-            Positioned.fill(
-              child: Image.network(
-                widget.mapImageUrl,
-                fit: BoxFit.fill,
-                filterQuality: FilterQuality.medium,
-                errorBuilder: (_, __, ___) => _buildImageError(),
-              ),
-            ),
-
-            // 2 + 3. Зоны и маршрут
-            Positioned.fill(
-              child: RepaintBoundary(
-                child: CustomPaint(
-                  painter: _MapPainter(
-                    stores: widget.stores,
-                    selectedId: widget.selectedStoreId,
-                    visitedIds: widget.visitedStoreIds,
-                    highlightedIds: widget.highlightedStoreIds,
-                    style: widget.style,
-                    scale: _scale,
-                    route: (widget.showRoute && selected != null)
-                        ? _routeWaypoints(
-                            userPoint,
-                            _toCanvas(selected.zone.destination, canvas),
-                          )
-                        : null,
-                    animation: _pulse,
-                  ),
-                ),
-              ),
-            ),
-
-            // Семантика для screen reader'ов
-            ...widget.stores.map((store) {
-              final b = store.zone.bounds;
-              return Positioned(
-                left: b.left * canvas.width,
-                top: b.top * canvas.height,
-                width: b.width * canvas.width,
-                height: b.height * canvas.height,
-                child: Semantics(
-                  button: true,
-                  label: store.name,
-                  onTap: () => widget.onStoreSelected?.call(store),
-                  child: const SizedBox.expand(),
-                ),
-              );
-            }),
-
-            // Слой жестов: без hover, с поддержкой onTapMap.
-            Positioned.fill(
-              child: GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                onTapUp: (details) {
-                  // Превью: тап по карте открывает полную карту.
-                  if (widget.onTapMap != null) {
-                    widget.onTapMap!();
-                    return;
-                  }
-                  if (kIsWeb && !_wheelZoomArmed) {
-                    setState(() => _wheelZoomArmed = true);
-                  }
-                  final store = _storeAt(details.localPosition, canvas);
-                  store != null
-                      ? widget.onStoreSelected?.call(store)
-                      : widget.onSelectionCleared?.call();
-                },
-              ),
-            ),
-
-            // 4. Маркеры
-            if (selected != null)
-              _buildMarker(
-                point: _toCanvas(selected.zone.destination, canvas),
-                icon: Icons.flag_rounded,
-                color: widget.style.destinationMarker,
-                tooltip: selected.name,
-              ),
-            _buildUserHalo(userPoint),
-            _buildMarker(
-              point: userPoint,
-              icon: Icons.directions_walk_rounded,
-              color: widget.style.userMarker,
-              tooltip: 'Вы здесь',
-            ),
-          ],
-        ),
-      ),
+      child: content,
     );
   }
 
