@@ -16,6 +16,7 @@ import 'package:flutter/gestures.dart';
 import 'package:supabase_flutter/supabase_flutter.dart' as supa;
 import 'all_shops_screen.dart';
 import 'package:qr_flutter/qr_flutter.dart';
+import 'category_labels.dart';
 import 'map/mall_map_widget.dart';
 import 'map/shop_zone.dart';
 
@@ -286,12 +287,17 @@ class _MainScreenState extends State<MainScreen> {
   int _selectedIndex = 0;
   late final List<Widget> _screens;
 
+  /// Доступ к состоянию вкладки «Акции»: со страницы магазина нужно
+  /// узнать, идёт ли путь, и запустить активацию.
+  final GlobalKey<DealsGameScreenState> _questKey =
+      GlobalKey<DealsGameScreenState>();
+
   @override
   void initState() {
     super.initState();
     _screens = [
-      const DealsGameScreen(),
-      const MallMapScreen(),
+      DealsGameScreen(key: _questKey),
+      MallMapScreen(onStartQuestFromShop: _handleStartQuestFromShop),
       const ProfileScreen(),
     ];
   }
@@ -300,10 +306,39 @@ class _MainScreenState extends State<MainScreen> {
     if (mounted) setState(() => _selectedIndex = index);
   }
 
+  /// Вызывается со страницы магазина на вкладке «Карта».
+  Future<void> _handleStartQuestFromShop(Shop shop) async {
+    final quest = _questKey.currentState;
+    if (quest == null) return;
+
+    if (quest.isPathActive) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Сначала завершите текущий цикл квеста'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+      return;
+    }
+
+    // Не активен — переключаемся на вкладку «Акции» и активируем магазин.
+    setTab(0);
+    await quest.activateShop(shop);
+  }
+
   @override
   Widget build(BuildContext context) {
     return GradientScaffold(
-      body: _screens[_selectedIndex],
+      // IndexedStack, а не _screens[_selectedIndex]: вкладки должны
+      // оставаться в дереве. Иначе со вкладки «Карта» состояние квеста
+      // размонтировано, _questKey.currentState == null, и «Начать квест»
+      // молча ничего не делает. Побочно вкладки больше не перезагружаются
+      // при каждом переключении.
+      body: IndexedStack(
+        index: _selectedIndex,
+        children: _screens,
+      ),
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: _selectedIndex,
         onTap: (index) => setState(() => _selectedIndex = index),
@@ -509,7 +544,9 @@ Widget build(BuildContext context) {
   final shop = targetShop;
   final hasDiscount = banner.discount.trim().isNotEmpty;
   final title = banner.title.isNotEmpty ? banner.title : (shop?.name ?? 'Акция');
-  final subtitle = banner.description.isNotEmpty ? banner.description : (shop?.category ?? '');
+  final subtitle = banner.description.isNotEmpty
+      ? banner.description
+      : (shop == null ? '' : categoryLabel(shop.category));
 
   Rect? crop;
   if (banner.cropRectData != null && banner.cropRectData!.length == 4) {
@@ -1430,10 +1467,19 @@ class DealsGameScreen extends StatefulWidget {
   const DealsGameScreen({super.key});
 
   @override
-  State<DealsGameScreen> createState() => _DealsGameScreenState();
+  State<DealsGameScreen> createState() => DealsGameScreenState();
 }
 
-class _DealsGameScreenState extends State<DealsGameScreen> {
+/// Публичный намеренно: вкладка «Карта» через GlobalKey спрашивает, идёт ли
+/// путь, и просит активировать магазин. Логика внутри не меняется.
+class DealsGameScreenState extends State<DealsGameScreen> {
+  /// Открыто наружу: другие вкладки проверяют, идёт ли сейчас путь.
+  bool get isPathActive => _isPathActive;
+
+  /// Открыто наружу: запускает активацию магазина так же, как тап по зоне
+  /// на главном экране квеста.
+  Future<void> activateShop(Shop shop) => _activateShop(shop);
+
   String? _hoveredShopId;
   String _searchQuery = '';
   String? _selectedCategory;
@@ -1528,8 +1574,11 @@ void initState() {
       {
         'id': 'task_2',
         'type': 'visit_category',
+        // Ключ английский — по нему сверяется прогресс; в описании,
+        // которое читает пользователь, перевод.
         'category': randomCategory,
-        'description': 'Посетите магазин категории "$randomCategory"',
+        'description':
+            'Посетите магазин категории "${categoryLabel(randomCategory)}"',
         'reward': 30,
         'progress': 0,
         'target': 1,
@@ -2448,7 +2497,9 @@ Future<void> _showStartQuestDialog() async {
                         ...categories.map((cat) => Padding(
                               padding: const EdgeInsets.only(right: 8),
                               child: CategoryChip(
-                                label: cat,
+                                // Подпись переведённая, selectedCategory
+                                // продолжает хранить ключ из БД.
+                                label: categoryLabel(cat),
                                 selected: selectedCategory == cat,
                                 onTap: () => setDialogState(
                                     () => selectedCategory = cat),

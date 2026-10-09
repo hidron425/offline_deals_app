@@ -9,6 +9,7 @@
 
 import 'package:flutter/material.dart';
 
+import 'category_labels.dart';
 import 'map/mall_map_widget.dart';
 import 'models.dart';
 import 'theme/app_theme.dart';
@@ -33,6 +34,10 @@ class ShopDetailScreen extends StatefulWidget {
 
   final Set<String> visitedStoreIds;
 
+  /// Запустить квест с этого магазина. null — баннер скидки не нажимается
+  /// (например, если страницу открыли не из вкладки «Карта»).
+  final void Function(Shop shop)? onStartQuestFromShop;
+
   const ShopDetailScreen({
     super.key,
     required this.shop,
@@ -41,6 +46,7 @@ class ShopDetailScreen extends StatefulWidget {
     required this.entrancePosition,
     required this.planBounds,
     this.visitedStoreIds = const <String>{},
+    this.onStartQuestFromShop,
   });
 
   @override
@@ -60,6 +66,15 @@ class _ShopDetailScreenState extends State<ShopDetailScreen> {
 
   String _startPointLabel() => 'входа в ТЦ';
 
+  Future<void> _onStartQuestTapped() async {
+    final cb = widget.onStartQuestFromShop;
+    if (cb == null) return;
+    // Сначала закрываем страницу магазина — иначе после переключения
+    // вкладки она останется поверх списка.
+    Navigator.of(context).pop();
+    cb(widget.shop);
+  }
+
   Future<void> _showChangeStartDialog() async {
     final result = await showDialog<_StartChoice>(
       context: context,
@@ -71,7 +86,7 @@ class _ShopDetailScreenState extends State<ShopDetailScreen> {
             child: Row(children: const [
               Icon(Icons.door_front_door_outlined, size: 20),
               SizedBox(width: 12),
-              Text('От входа в ТЦ'),
+              Expanded(child: Text('От входа в ТЦ')),
             ]),
           ),
           // Вариант выключен: «от моего местоположения» требует навигации
@@ -81,8 +96,10 @@ class _ShopDetailScreenState extends State<ShopDetailScreen> {
             child: Row(children: const [
               Icon(Icons.my_location, size: 20, color: AppColors.textDisabled),
               SizedBox(width: 12),
-              Text('От моего местоположения',
-                  style: TextStyle(color: AppColors.textDisabled)),
+              Expanded(
+                child: Text('От моего местоположения',
+                    style: TextStyle(color: AppColors.textDisabled)),
+              ),
               SizedBox(width: 8),
               Text('Скоро',
                   style: TextStyle(
@@ -150,7 +167,7 @@ class _ShopDetailScreenState extends State<ShopDetailScreen> {
                       ),
                       const SizedBox(height: AppSpacing.xs),
                       Text(
-                        shop.category,
+                        categoryLabel(shop.category),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
@@ -168,37 +185,60 @@ class _ShopDetailScreenState extends State<ShopDetailScreen> {
             Padding(
               padding: const EdgeInsets.symmetric(
                   horizontal: AppSpacing.md, vertical: AppSpacing.sm),
-              child: Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: AppColors.successContainer,
+              child: Material(
+                color: AppColors.successContainer,
+                borderRadius: BorderRadius.circular(AppRadius.md),
+                child: InkWell(
                   borderRadius: BorderRadius.circular(AppRadius.md),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    if (shop.shortDiscount.isNotEmpty)
-                      Text(
-                        shop.shortDiscount,
-                        style: const TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.w800,
-                          color: AppColors.success,
-                        ),
-                      ),
-                    // Полную формулировку показываем, только если она не
-                    // дублирует короткую.
-                    if (shop.discount.isNotEmpty &&
-                        shop.discount != shop.shortDiscount)
-                      Text(
-                        shop.discount,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                            fontSize: 13, color: AppColors.textSecondary),
-                      ),
-                  ],
+                  // Колбэка нет — баннер остаётся обычной плашкой без ink.
+                  onTap: widget.onStartQuestFromShop == null
+                      ? null
+                      : _onStartQuestTapped,
+                  child: Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        if (shop.shortDiscount.isNotEmpty)
+                          Text(
+                            shop.shortDiscount,
+                            style: const TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.w800,
+                              color: AppColors.success,
+                            ),
+                          ),
+                        // Полную формулировку показываем, только если она
+                        // не дублирует короткую.
+                        if (shop.discount.isNotEmpty &&
+                            shop.discount != shop.shortDiscount)
+                          Text(
+                            shop.discount,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                                fontSize: 13, color: AppColors.textSecondary),
+                          ),
+                        if (widget.onStartQuestFromShop != null) ...[
+                          const SizedBox(height: 6),
+                          const Row(
+                            children: [
+                              Icon(Icons.play_arrow_rounded,
+                                  size: 16, color: AppColors.success),
+                              SizedBox(width: 4),
+                              Expanded(
+                                child: Text('Начать квест с этого магазина',
+                                    style: TextStyle(
+                                        fontSize: 12,
+                                        color: AppColors.success,
+                                        fontWeight: FontWeight.w600)),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
                 ),
               ),
             ),

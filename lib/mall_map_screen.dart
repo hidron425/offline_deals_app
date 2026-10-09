@@ -17,6 +17,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart' as supa;
 
+import 'category_labels.dart';
 import 'main.dart' show MainScreen;
 import 'map/mall_map_widget.dart';
 import 'map/shop_zone.dart';
@@ -25,7 +26,14 @@ import 'shop_detail_screen.dart';
 import 'theme/app_theme.dart';
 
 class MallMapScreen extends StatefulWidget {
-  const MallMapScreen({super.key});
+  /// Запустить квест с этого магазина. Приходит из MainScreen: сама
+  /// вкладка состоянием квеста не владеет.
+  final void Function(Shop shop)? onStartQuestFromShop;
+
+  const MallMapScreen({
+    super.key,
+    this.onStartQuestFromShop,
+  });
 
   @override
   State<MallMapScreen> createState() => _MallMapScreenState();
@@ -393,7 +401,9 @@ class _MallMapScreenState extends State<MallMapScreen> {
                   Padding(
                     padding: const EdgeInsets.only(right: AppSpacing.sm),
                     child: ChoiceChip(
-                      label: Text(c),
+                      // На чипе — перевод, в _category — английский ключ
+                      // из БД: по нему и фильтруем.
+                      label: Text(c == _anyCategory ? c : categoryLabel(c)),
                       // Выбор строго один: повторный тап по активному чипу
                       // возвращает «Все».
                       selected: _category == c,
@@ -534,6 +544,7 @@ class _MallMapScreenState extends State<MallMapScreen> {
           entrancePosition: _entrance,
           planBounds: _planBounds,
           visitedStoreIds: const <String>{},
+          onStartQuestFromShop: widget.onStartQuestFromShop,
         ),
       ),
     );
