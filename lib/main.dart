@@ -1,5 +1,6 @@
 import 'dart:ui';
 import 'dart:async';
+import 'package:flutter/foundation.dart' show ValueListenable;
 import 'package:flutter/material.dart';
 import 'mall_map_screen.dart';
 import 'models.dart';
@@ -298,6 +299,11 @@ class _MainScreenState extends State<MainScreen> {
   final ValueNotifier<Set<String>> _visitedShopIds =
       ValueNotifier(const <String>{});
 
+  /// Счётчик «вкладку открыли». Нужен из-за IndexedStack: вкладки больше не
+  /// перемонтируются, и загрузчики в initState срабатывают один раз за
+  /// запуск. Экраны слушают тик и перечитывают свои данные.
+  final ValueNotifier<int> _tabTick = ValueNotifier<int>(0);
+
   @override
   void initState() {
     super.initState();
@@ -307,18 +313,24 @@ class _MainScreenState extends State<MainScreen> {
         onStartQuestFromShop: _handleStartQuestFromShop,
         visitedStoreIds: _visitedShopIds,
       ),
-      const ProfileScreen(),
+      ProfileScreen(tabTick: _tabTick),
     ];
   }
 
   @override
   void dispose() {
     _visitedShopIds.dispose();
+    _tabTick.dispose();
     super.dispose();
   }
 
   void setTab(int index) {
-    if (mounted) setState(() => _selectedIndex = index);
+    if (!mounted) return;
+    final changed = _selectedIndex != index;
+    setState(() => _selectedIndex = index);
+    // Тик только на смену вкладки: повторный тап по активной не должен
+    // гонять пять запросов заново.
+    if (changed) _tabTick.value++;
   }
 
   /// Вызывается со страницы магазина на вкладке «Карта».
@@ -356,7 +368,9 @@ class _MainScreenState extends State<MainScreen> {
       ),
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: _selectedIndex,
-        onTap: (index) => setState(() => _selectedIndex = index),
+        // Через setTab, а не напрямую: иначе тик не поднимется и экран,
+        // который открыли тапом по этой панели, не перечитает данные.
+        onTap: setTab,
         items: const [
           BottomNavigationBarItem(icon: Icon(Icons.local_offer_outlined), activeIcon: Icon(Icons.local_offer), label: 'Акции'),
           BottomNavigationBarItem(icon: Icon(Icons.map_outlined), activeIcon: Icon(Icons.map), label: 'Карта'),
@@ -1498,8 +1512,15 @@ class DealsGameScreenState extends State<DealsGameScreen> {
   /// Публикует снимок посещённых магазинов наружу. Логику самого
   /// множества не меняет — только отдаёт копию слушателям.
   void _publishVisited() {
-    widget.visitedShopIdsOut?.value =
-        Set<String>.unmodifiable(_allVisitedShopIds);
+    _cachedVisitedIds = Set<String>.unmodifiable(_allVisitedShopIds);
+    widget.visitedShopIdsOut?.value = _cachedVisitedIds;
+  }
+
+  /// Пересобирает набор подсвеченных зон. Зовётся там же, где меняется
+  /// _pendingForkShops: новый Set создаётся на изменение, а не на кадр.
+  void _syncForkHighlight() {
+    _cachedHighlightedIds =
+        _pendingForkShops?.map((s) => s.id).toSet() ?? const <String>{};
   }
 
   /// Открыто наружу: запускает активацию магазина так же, как тап по зоне
@@ -1527,6 +1548,17 @@ class DealsGameScreenState extends State<DealsGameScreen> {
   bool _isLoading = true;
 
   List<Shop>? _pendingForkShops;
+
+  /// Наборы для MallMapWidget держим в полях, а не собираем в build.
+  ///
+  /// _MapPainter.shouldRepaint сравнивает их ПО ИДЕНТИЧНОСТИ. Пока
+  /// highlightedStoreIds собирался выражением прямо в build, каждый
+  /// setState давал новый Set — и перерисовывались все 90 подписей.
+  /// _allVisitedShopIds, наоборот, мутируется на месте и идентичность не
+  /// меняет, из-за чего посещённая зона могла не перекраситься вовсе.
+  /// Снимок на каждое изменение решает оба случая.
+  Set<String> _cachedHighlightedIds = const <String>{};
+  Set<String> _cachedVisitedIds = const <String>{};
   bool _isPathActive = false;
 
   Shop? _lastShop;
@@ -1757,6 +1789,7 @@ void initState() {
         _usedShopIds.addAll(usedList);
         _isPathActive = (data['is_path_active'] as bool?) ?? (completedSteps > 0);
         _pendingForkShops = pendingShops;
+        _syncForkHighlight();
         _cycleCount = (data['cycle_count'] as num?)?.toInt() ?? 0;
         _lastShopId = lastId;
         _lastShop = lastShop;
@@ -1803,6 +1836,7 @@ void initState() {
       _lastShop = null;
       _lastShopId = null;
       _pendingForkShops = null;
+      _syncForkHighlight();
       _lastCafeDate = null;
       _lastElectronicsDate = null;
     });
@@ -1828,6 +1862,7 @@ void initState() {
       _usedShopIds.clear();
       _isPathActive = false;
       _pendingForkShops = null;
+      _syncForkHighlight();
       _pendingQRShop = null;
       _lastShop = null;
       _lastShopId = null;
@@ -1845,6 +1880,7 @@ void initState() {
     _favoriteShops.clear();        // ← добавили
     _isPathActive = false;
     _pendingForkShops = null;
+    _syncForkHighlight();
     _pendingQRShop = null;         // ← ЭТО КЛЮЧЕВОЕ, тут был баг
     _selectedCity = null;
     _selectedMall = null;
@@ -2172,9 +2208,8 @@ bool isAlreadyInList(List<dynamic> list, String ruleId) {
       planBounds: const Rect.fromLTRB(0.0, 0.22, 1.0, 0.77),
 
       selectedStoreId: _selectedRouteShop?.id,
-      highlightedStoreIds:
-          _pendingForkShops?.map((s) => s.id).toSet() ?? const {},
-      visitedStoreIds: _allVisitedShopIds,
+      highlightedStoreIds: _cachedHighlightedIds,
+      visitedStoreIds: _cachedVisitedIds,
 
       // Превью-режим
       interactive: false,
@@ -2598,8 +2633,9 @@ Future<void> _showStartQuestDialog() async {
     return;
   }
 
+  // Отладочная телеметрия. Не должна задерживать показ диалога.
   try {
-    await _sb.from('debug_fork_logs').insert({
+    unawaited(_sb.from('debug_fork_logs').insert({
       'user_id': _userId,
       'current_shop_id': currentShop.id,
       'current_shop_name': currentShop.name,
@@ -2614,7 +2650,9 @@ Future<void> _showStartQuestDialog() async {
       'collab_shop_id': hasCollab ? toShop!.id : '',
       'collab_shop_name': hasCollab ? toShop!.name : '',
       'selected_shops': nextShops.take(2).map((s) => s.id).toList(),
-    });
+    }).catchError((Object e) {
+      print('❌ debug_fork_logs: $e');
+    }));
   } catch (e) {
     print('❌ debug_fork_logs: $e');
   }
@@ -2684,6 +2722,7 @@ Future<void> _showStartQuestDialog() async {
       Navigator.pop(context);
       setState(() {
         _pendingForkShops = nextShops.isNotEmpty ? nextShops : null;
+        _syncForkHighlight();
         _isPathActive = true;
         _lastShopId = currentShop.id;
         _lastShop = currentShop;
@@ -2815,13 +2854,15 @@ Expanded(
       _usedShopIds.add(shop.id);
       if (_completedSteps < _totalSteps) _completedSteps++;
       _pendingForkShops = null;
+      _syncForkHighlight();
       _isPathActive = _completedSteps > 0 && _completedSteps < _totalSteps;
       _lastShop = shop;
       _lastShopId = shop.id;
       _pendingQRShop = null;
     });
-    await _saveProgress();
-
+    // Дневные ограничения помечаем ДО показа развилки: _getAvailableForFork
+    // читает _lastCafeDate/_lastElectronicsDate, и если выставить их позже,
+    // в кандидаты попадёт второе кафе в тот же день.
     final todayStr = DateFormat('yyyy-MM-dd').format(DateTime.now());
     final dateUpdates = <String, dynamic>{};
     if (shop.category == 'cafe') {
@@ -2831,6 +2872,19 @@ Expanded(
       _lastElectronicsDate = todayStr;
       dateUpdates['last_electronics_date'] = todayStr;
     }
+
+    await _saveProgress();
+
+    // Развилка не зависит ни от одной записи ниже: один round trip вместо
+    // восьми — диалог появляется через ~150 мс, а не через 2 секунды.
+    // Также это устраняет гонку: _saveProgress завершается до открытия
+    // диалога, и write dateUpdates не может затереть pending_fork_shops,
+    // который пользователь выбрал через «Продолжить позже».
+    //
+    // На последнем шаге развилки нет: там цикл закрывается своей ветке в
+    // конце метода.
+    final isCycleComplete = _completedSteps == _totalSteps;
+    if (!isCycleComplete) unawaited(_showForkDialog(shop));
 
     try {
   final userDoc = await _sb
@@ -2846,6 +2900,11 @@ Expanded(
   // Локально отмечаем ДО вставки в sales, чтобы не потерять при ошибке
   _allVisitedShopIds.add(shop.id);
   _publishVisited();
+  // Перестроиться обязательно: карту на ЭТОЙ вкладке строит build по
+  // _cachedVisitedIds (нотифаер слушает только вкладка «Карта»), а после
+  // снятия super(repaint:) с _MapPainter перерисовку больше ничто не
+  // навязывает — зона так и останется неотмеченной.
+  if (mounted) setState(() {});
 
   await _sb.from('sales').insert({
     'shop_id': shop.id,
@@ -2860,10 +2919,9 @@ Expanded(
     await _checkBonuses('step_completed', currentShop: shop);
     await _checkAllShopsBonus();
 
-    if (_completedSteps == _totalSteps) {
+    // Развилку уже показали выше; здесь остаётся только закрытие цикла.
+    if (isCycleComplete) {
       await _startNewCycle();
-    } else {
-      await _showForkDialog(shop);
     }
   }
 
@@ -2988,6 +3046,7 @@ Expanded(
       _cycleCount = newCycleCount;
       _isPathActive = true;
       _pendingForkShops = null;
+      _syncForkHighlight();
       _lastShop = null;
       _lastShopId = null;
     });
@@ -3222,6 +3281,7 @@ Expanded(
               Navigator.pop(context);
               setState(() {
                 _pendingForkShops = first;
+                _syncForkHighlight();
                 _isPathActive = true;
               });
               _saveProgress();
@@ -3427,7 +3487,21 @@ Expanded(
     return _buildShopIconsGrid();
   }
 
+  /// Сетка магазинов на главной. Отметки «посещён» мутируются на месте, а
+  /// _cachedVisitedIds — обычное поле и перестройку не вызывает; поэтому
+  /// слушаем нотифаер, который пишет _publishVisited.
   Widget _buildShopIconsGrid() {
+    final visitedListenable = widget.visitedShopIdsOut;
+    if (visitedListenable == null) {
+      return _buildShopIconsGridBody(_cachedVisitedIds);
+    }
+    return ValueListenableBuilder<Set<String>>(
+      valueListenable: visitedListenable,
+      builder: (context, visited, _) => _buildShopIconsGridBody(visited),
+    );
+  }
+
+  Widget _buildShopIconsGridBody(Set<String> visited) {
   final visibleShops = _getVisibleShops();
   if (visibleShops.isEmpty) {
     return const EmptyState(
@@ -3438,14 +3512,18 @@ Expanded(
   }
 
   const int previewCount = 12;
+  // Нужен ниже для подписи кнопки «Начать путь» / «Продолжить путь».
   final isFirstCycle = _cycleCount == 0;
-  // На главной не показываем посещённые — они только в каталоге
-  final sourceShops = isFirstCycle
-      ? visibleShops
-      : visibleShops
-          .where((s) => !_allVisitedShopIds.contains(s.id))
-          .toList();
-  final previewShops = sourceShops.take(previewCount).toList();
+  // Посещённые не прячем, а опускаем в конец: сетка всегда остаётся
+  // заполненной. Раньше они вырезались совсем, и со второго цикла сетка
+  // усыхала — а к концу ТЦ могла опустеть. Порядок внутри каждой группы
+  // остаётся тем, что задал _getVisibleShops.
+  final unvisited =
+      visibleShops.where((s) => !visited.contains(s.id)).toList();
+  final visitedShops =
+      visibleShops.where((s) => visited.contains(s.id)).toList();
+  final previewShops =
+      [...unvisited, ...visitedShops].take(previewCount).toList();
 
   return Column(
     crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -3490,7 +3568,7 @@ const SizedBox(height: AppSpacing.md),
               context,
               MaterialPageRoute(
                 builder: (_) => AllShopsScreen(
-                  visitedIds: _allVisitedShopIds,
+                  visitedIds: _cachedVisitedIds,
                   onStartQuest: (shop) => _activateShop(shop),
                 ),
               ),
@@ -3627,7 +3705,12 @@ const SizedBox(height: AppSpacing.md),
 
 // ----- ЭКРАН ПРОФИЛЯ -----
 class ProfileScreen extends StatefulWidget {
-  const ProfileScreen({super.key});
+  /// Тик переключения вкладок из MainScreen. При каждом изменении экран
+  /// перечитывает данные: из-за IndexedStack он не перемонтируется, и
+  /// initState больше не повторяется.
+  final ValueListenable<int>? tabTick;
+
+  const ProfileScreen({super.key, this.tabTick});
 
   @override
   State<ProfileScreen> createState() => _ProfileScreenState();
@@ -3651,11 +3734,39 @@ class _ProfileScreenState extends State<ProfileScreen> {
   void initState() {
     super.initState();
     _userId = supa.Supabase.instance.client.auth.currentUser!.id;
-    _loadPushSettings();
-    _loadSubscribedShops();
-    _ensureReferralCode();
-    _loadCycleCount();
-    _loadPendingBonuses();
+    _refreshAll();
+    widget.tabTick?.addListener(_onTabActivated);
+  }
+
+  @override
+  void dispose() {
+    widget.tabTick?.removeListener(_onTabActivated);
+    super.dispose();
+  }
+
+  void _onTabActivated() {
+    if (!mounted) return;
+    _refreshAll();
+  }
+
+  /// Перечитывает всё, что экран грузит из user_progress. Пять запросов,
+  /// поэтому не пускаем второй проход, пока не закончился первый: иначе
+  /// быстрое переключение вкладок множит запросы.
+  bool _refreshing = false;
+  Future<void> _refreshAll() async {
+    if (_refreshing) return;
+    _refreshing = true;
+    try {
+      await Future.wait([
+        _loadPushSettings(),
+        _loadSubscribedShops(),
+        _ensureReferralCode(),
+        _loadCycleCount(),
+        _loadPendingBonuses(),
+      ]);
+    } finally {
+      _refreshing = false;
+    }
   }
 
   Future<void> _loadPushSettings() async {
@@ -3771,7 +3882,29 @@ class _ProfileScreenState extends State<ProfileScreen> {
     if (mounted) setState(() => _pendingBonuses = bonuses);
   }
 
+  /// Бонусы, по которым списание уже идёт. Кнопка «Получить» на это время
+  /// гаснет: повторный тап запускал второй read-modify-write по
+  /// pending_bonuses и мог затереть первый.
+  final Set<String> _claimingBonusKeys = <String>{};
+
+  /// Ключ строки бонуса — те же поля, по которым _markBonusUsed находит
+  /// запись в pending_bonuses, значит и уникален он ровно так же.
+  String _bonusKey(Map<String, dynamic> bonus) =>
+      '${bonus['title'] ?? ''}|${bonus['message'] ?? ''}';
+
   Future<void> _claimBonus(Map<String, dynamic> bonus) async {
+    final key = _bonusKey(bonus);
+    if (_claimingBonusKeys.contains(key)) return;
+    setState(() => _claimingBonusKeys.add(key));
+    try {
+      await _claimBonusFlow(bonus);
+    } finally {
+      _claimingBonusKeys.remove(key);
+      if (mounted) setState(() {});
+    }
+  }
+
+  Future<void> _claimBonusFlow(Map<String, dynamic> bonus) async {
     print('🔵 _claimBonus: $bonus');
 
     final title = (bonus['title'] ?? 'Бонус').toString();
@@ -3900,7 +4033,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
         final shopName = shopDoc['name'] ?? targetShopId;
         final qrData = 'SHOPX_BONUS:$qrToken:$targetShopId:${ruleId ?? ""}';
 
-        await showDialog(
+        final used = await showDialog<bool>(
           context: context,
           barrierDismissible: false,
           builder: (ctx) => AlertDialog(
@@ -3940,19 +4073,14 @@ class _ProfileScreenState extends State<ProfileScreen> {
             ),
             actions: [
               TextButton(
-                onPressed: () => Navigator.pop(ctx),
+                onPressed: () => Navigator.pop(ctx, false),
                 child: const Text('Закрыть'),
               ),
               ElevatedButton.icon(
-                onPressed: () async {
-                  Navigator.pop(ctx);
-                  await _markBonusUsed(
-                    title: title,
-                    message: message,
-                    targetShopId: targetShopId,
-                    ruleId: ruleId,
-                  );
-                },
+                // Кнопка только закрывает диалог. Списание — ниже, в теле
+                // метода: раньше оно уходило в отдельную цепочку после
+                // Navigator.pop и гонялось с чтением списка.
+                onPressed: () => Navigator.pop(ctx, true),
                 icon: const Icon(Icons.check),
                 label: const Text('Я использовал QR-код'),
                 style: ElevatedButton.styleFrom(
@@ -3964,30 +4092,16 @@ class _ProfileScreenState extends State<ProfileScreen> {
           ),
         );
 
-        // Помечаем бонус как issued (чтобы остался в списке с пометкой)
-        try {
-          final userDoc = await _sb
-              .from('user_progress')
-              .select('pending_bonuses')
-              .eq('user_id', _userId)
-              .maybeSingle();
-          final pending = List<dynamic>.from(userDoc?['pending_bonuses'] ?? []);
-          for (int i = 0; i < pending.length; i++) {
-            final item = pending[i];
-            if (item is Map && item['title'] == title && item['message'] == message) {
-              final updated = Map<String, dynamic>.from(item);
-              updated['issued_at'] = DateTime.now().toIso8601String();
-              updated['qr_token'] = qrToken;
-              updated['status'] = 'issued';
-              pending[i] = updated;
-              break;
-            }
-          }
-          await _sb.from('user_progress').update({
-            'pending_bonuses': pending,
-          }).eq('user_id', _userId);
-        } catch (e) {
-          print('❌ _claimBonus update: $e');
+        // Блок «issued stamping» убран: пометка status не читалась нигде
+        // (_getPendingBonuses её игнорирует), а вторая запись в тот же
+        // столбец возвращала бонус, который только что списали.
+        if (used == true) {
+          await _markBonusUsed(
+            title: title,
+            message: message,
+            targetShopId: targetShopId,
+            ruleId: ruleId,
+          );
         }
 
         if (mounted) await _loadPendingBonuses();
@@ -4005,7 +4119,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     final qrData = 'SHOPX_BONUS:$universalToken:ANY:${ruleId ?? ""}';
 
     if (!mounted) return;
-    await showDialog(
+    final used = await showDialog<bool>(
       context: context,
       barrierDismissible: false,
       builder: (ctx) => AlertDialog(
@@ -4042,19 +4156,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(ctx),
+            onPressed: () => Navigator.pop(ctx, false),
             child: const Text('Закрыть'),
           ),
           ElevatedButton.icon(
-            onPressed: () async {
-              Navigator.pop(ctx);
-              await _markBonusUsed(
-                title: title,
-                message: message,
-                targetShopId: '',
-                ruleId: ruleId,
-              );
-            },
+            onPressed: () => Navigator.pop(ctx, true),
             icon: const Icon(Icons.check),
             label: const Text('Я использовал QR-код'),
             style: ElevatedButton.styleFrom(
@@ -4065,6 +4171,19 @@ class _ProfileScreenState extends State<ProfileScreen> {
         ],
       ),
     );
+
+    // Та же сериализация, что в варианте 2. Плюс перечитываем список —
+    // раньше этой ветке его вообще не обновляли, и списанный бонус висел
+    // на экране до следующего обновления профиля.
+    if (used == true) {
+      await _markBonusUsed(
+        title: title,
+        message: message,
+        targetShopId: '',
+        ruleId: ruleId,
+      );
+    }
+    if (mounted) await _loadPendingBonuses();
   }
 
   Future<void> _markBonusUsed({
@@ -4533,7 +4652,9 @@ const SizedBox(height: 8),
         SizedBox(
           height: 32,
           child: ElevatedButton(
-            onPressed: () => _claimBonus(bonus),
+            onPressed: _claimingBonusKeys.contains(_bonusKey(bonus))
+                ? null
+                : () => _claimBonus(bonus),
             style: ElevatedButton.styleFrom(
               backgroundColor: AppColors.primary,
               foregroundColor: Colors.white,

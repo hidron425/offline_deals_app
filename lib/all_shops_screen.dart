@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart' as supa;
+import 'category_labels.dart';
 import 'models.dart';
 import 'theme/app_theme.dart';
 import 'widgets/app_widgets.dart';
@@ -103,12 +104,15 @@ class _AllShopsScreenState extends State<AllShopsScreen> {
 }
 
   List<String> _categories() {
-    return _allShops
+    final cats = _allShops
         .map((s) => s.category)
         .where((c) => c.isNotEmpty)
         .toSet()
-        .toList()
-      ..sort();
+        .toList();
+    // Сортируем по подписи, а не по ключу из БД: иначе русские названия
+    // идут в алфавите английских (cafe, clothing, electronics, other).
+    cats.sort((a, b) => categoryLabel(a).compareTo(categoryLabel(b)));
+    return cats;
   }
 
   void _showShopInfo(Shop shop) {
@@ -350,7 +354,9 @@ class _AllShopsScreenState extends State<AllShopsScreen> {
                             ..._categories().map((cat) => Padding(
                                   padding: const EdgeInsets.only(right: 8),
                                   child: CategoryChip(
-                                    label: cat,
+                                    // Подпись переведённая, фильтр
+                                    // _selectedCategory держит ключ из БД.
+                                    label: categoryLabel(cat),
                                     selected: _selectedCategory == cat,
                                     onTap: () => setState(
                                         () => _selectedCategory = cat),
@@ -386,6 +392,12 @@ class _AllShopsScreenState extends State<AllShopsScreen> {
   itemCount: filtered.length,
   itemBuilder: (context, index) {
     final shop = filtered[index];
+    // Оверлей «посещён» — по visitedIds: это множество реально приходит с
+    // экрана квеста. visitedShopCycles/currentCycle на этом переходе не
+    // передаются, поэтому isOnCooldown всегда был false и оверлей не
+    // показывался вовсе. Поля оставляем: по ним будет подпись «доступен
+    // с цикла N».
+    final isVisited = widget.visitedIds.contains(shop.id);
     final visitCycle = widget.visitedShopCycles[shop.id];
     final isOnCooldown =
         visitCycle != null && widget.currentCycle <= visitCycle;
@@ -397,7 +409,7 @@ class _AllShopsScreenState extends State<AllShopsScreen> {
       onHover: (_) {},
       isFavorite: false,
       onToggleFavorite: null,
-      isVisited: isOnCooldown,
+      isVisited: isVisited,
       availableAtCycle: availableAtCycle,
     );
   },

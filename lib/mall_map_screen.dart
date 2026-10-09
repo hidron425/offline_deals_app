@@ -494,9 +494,23 @@ class _MallMapScreenState extends State<MallMapScreen> {
     );
   }
 
-  /// Список под картой. Высота — 30% экрана, но не больше 240: на вытянутом
-  /// экране список не должен съедать план.
+  /// Список под картой. Отметки «посещён» приходят из вкладки «Акции» и
+  /// меняются на ходу, поэтому слушаем нотифаер здесь же — перестраивается
+  /// только список, а не фильтры и не карта (тот же приём, что в _buildMap).
   Widget _buildShopList(List<Shop> shops) {
+    final visitedListenable = widget.visitedStoreIds;
+    if (visitedListenable == null) {
+      return _buildShopListBody(shops, const <String>{});
+    }
+    return ValueListenableBuilder<Set<String>>(
+      valueListenable: visitedListenable,
+      builder: (context, visited, _) => _buildShopListBody(shops, visited),
+    );
+  }
+
+  /// Высота — 30% экрана, но не больше 240: на вытянутом экране список не
+  /// должен съедать план.
+  Widget _buildShopListBody(List<Shop> shops, Set<String> visited) {
     final height =
         math.min(MediaQuery.of(context).size.height * 0.3, 240.0);
 
@@ -556,12 +570,27 @@ class _MallMapScreenState extends State<MallMapScreen> {
                         ),
                       ),
               ),
-              title: Text(
-                shop.name,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                    fontSize: 14, fontWeight: FontWeight.w600),
+              title: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // Flexible, иначе длинное название вытолкнет галочку за
+                  // край строки вместо того, чтобы обрезаться троеточием.
+                  Flexible(
+                    child: Text(
+                      shop.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                          fontSize: 14, fontWeight: FontWeight.w600),
+                    ),
+                  ),
+                  if (visited.contains(shop.id))
+                    const Padding(
+                      padding: EdgeInsets.only(left: 6),
+                      child: Icon(Icons.check_circle,
+                          size: 14, color: AppColors.success),
+                    ),
+                ],
               ),
               subtitle: subtitle.isEmpty
                   ? null
