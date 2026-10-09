@@ -21,6 +21,7 @@ import 'main.dart' show MainScreen;
 import 'map/mall_map_widget.dart';
 import 'map/shop_zone.dart';
 import 'models.dart';
+import 'shop_detail_screen.dart';
 import 'theme/app_theme.dart';
 
 class MallMapScreen extends StatefulWidget {
@@ -512,11 +513,28 @@ class _MallMapScreenState extends State<MallMapScreen> {
                     style: const TextStyle(
                         fontSize: 12, color: AppColors.textSecondary),
                   ),
-            // Тап строки ведёт маршрут к магазину: карта получает
-            // selectedStoreId, диалог не открываем — он для тапа по зоне.
-            onTap: () => setState(() => _selectedStoreId = shop.id),
+            // Тап строки открывает карточку магазина с маршрутом. Диалог
+            // _showShopInfo остаётся на тапе по зоне самой карты.
+            onTap: () => _openShopDetail(shop),
           );
         },
+      ),
+    );
+  }
+
+  void _openShopDetail(Shop shop) {
+    final url = _mapImageUrl;
+    if (url == null || url.isEmpty) return;
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => ShopDetailScreen(
+          shop: shop,
+          mapImageUrl: url,
+          stores: _stores,
+          entrancePosition: _entrance,
+          planBounds: _planBounds,
+          visitedStoreIds: const <String>{},
+        ),
       ),
     );
   }
