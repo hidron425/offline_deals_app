@@ -7,6 +7,12 @@
 // План и точка входа берутся из public.malls выбранного пользователем ТЦ,
 // а не из бандла: раньше здесь лежала картинка assets/images/mall_map.png,
 // одна на все ТЦ.
+//
+// Под планом — поиск, фильтр по категориям и список магазинов. Фильтры
+// работают и на список, и на карту: совпадения подсвечиваются через
+// highlightedStoreIds, остальные зоны гаснут.
+
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart' as supa;
@@ -15,6 +21,7 @@ import 'main.dart' show MainScreen;
 import 'map/mall_map_widget.dart';
 import 'map/shop_zone.dart';
 import 'models.dart';
+import 'theme/app_theme.dart';
 
 class MallMapScreen extends StatefulWidget {
   const MallMapScreen({super.key});
@@ -28,6 +35,10 @@ class _MallMapScreenState extends State<MallMapScreen> {
   /// вся ширина. Значение привязано к текущему afimall.png — при замене
   /// картинки его нужно пересчитать (такое же значение на главной).
   static const Rect _planBounds = Rect.fromLTRB(0.0, 0.22, 1.0, 0.77);
+
+  /// Псевдокатегория «без фильтра». Не может совпасть с реальной: такого
+  /// значения в shops.category нет.
+  static const String _anyCategory = 'Все';
 
   bool _loading = true;
   String? _error;
@@ -43,7 +54,15 @@ class _MallMapScreenState extends State<MallMapScreen> {
   /// скидка — поэтому держим магазины по id.
   Map<String, Shop> _shopById = const {};
 
+  /// Все магазины ТЦ по алфавиту — для списка и для набора категорий.
+  /// Магазины без зоны тоже здесь: в списке они нужны, на карте их нет.
+  List<Shop> _shops = const [];
+
   String? _selectedStoreId;
+
+  final TextEditingController _searchCtrl = TextEditingController();
+  String _search = '';
+  String _category = _anyCategory;
 
   supa.SupabaseClient get _sb => supa.Supabase.instance.client;
 
@@ -51,6 +70,12 @@ class _MallMapScreenState extends State<MallMapScreen> {
   void initState() {
     super.initState();
     _load();
+  }
+
+  @override
+  void dispose() {
+    _searchCtrl.dispose();
+    super.dispose();
   }
 
   // --- загрузка -----------------------------------------------------------
@@ -103,6 +128,7 @@ class _MallMapScreenState extends State<MallMapScreen> {
         );
         _stores = _buildStores(shops);
         _shopById = {for (final s in shops) s.id: s};
+        _shops = [...shops]..sort((a, b) => a.name.compareTo(b.name));
         _loading = false;
       });
     } catch (e) {
@@ -122,6 +148,42 @@ class _MallMapScreenState extends State<MallMapScreen> {
       _noMallSelected = false;
     });
     _load();
+  }
+
+  // --- фильтры ------------------------------------------------------------
+
+  /// «Все» + категории загруженных магазинов по алфавиту. Дедуп без учёта
+  /// регистра: в базе встречаются и «Обувь», и «обувь».
+  List<String> get _categories {
+    final byLower = <String, String>{};
+    for (final s in _shops) {
+      final c = s.category.trim();
+      if (c.isEmpty) continue;
+      byLower.putIfAbsent(c.toLowerCase(), () => c);
+    }
+    final list = byLower.values.toList()
+      ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+    return [_anyCategory, ...list];
+  }
+
+  /// Поиск применяется ВНУТРИ выбранной категории, а не вместо неё.
+  List<Shop> get _filteredShops {
+    final query = _search.trim().toLowerCase();
+    return _shops.where((s) {
+      if (_category != _anyCategory &&
+          s.category.toLowerCase() != _category.toLowerCase()) {
+        return false;
+      }
+      return query.isEmpty || s.name.toLowerCase().contains(query);
+    }).toList();
+  }
+
+  void _resetFilters() {
+    _searchCtrl.clear();
+    setState(() {
+      _search = '';
+      _category = _anyCategory;
+    });
   }
 
   /// Та же логика, что в _buildEnhancedMap на главной: зона нужна целиком,
@@ -266,8 +328,96 @@ class _MallMapScreenState extends State<MallMapScreen> {
       );
     }
 
+    final filtered = _filteredShops;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _buildFilters(),
+        if (filtered.isEmpty)
+          Expanded(child: _buildNothingFound())
+        else ...[
+          Expanded(child: _buildMap(url, filtered)),
+          _buildShopList(filtered),
+        ],
+      ],
+    );
+  }
+
+  Widget _buildFilters() {
+    final categories = _categories;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(
+              horizontal: AppSpacing.md, vertical: 12),
+          child: TextField(
+            controller: _searchCtrl,
+            textInputAction: TextInputAction.search,
+            onChanged: (v) => setState(() => _search = v),
+            decoration: InputDecoration(
+              hintText: 'Поиск магазина',
+              prefixIcon: const Icon(Icons.search),
+              isDense: true,
+              filled: true,
+              fillColor: AppColors.surfaceVariant,
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(AppRadius.md),
+                borderSide: BorderSide.none,
+              ),
+              suffixIcon: _search.isEmpty
+                  ? null
+                  : IconButton(
+                      icon: const Icon(Icons.close, size: 18),
+                      tooltip: 'Очистить',
+                      onPressed: () {
+                        _searchCtrl.clear();
+                        setState(() => _search = '');
+                      },
+                    ),
+            ),
+          ),
+        ),
+
+        // Одна категория на весь ТЦ — выбирать не из чего, строку не рисуем.
+        if (categories.length > 1)
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
+            child: Row(
+              children: [
+                for (final c in categories)
+                  Padding(
+                    padding: const EdgeInsets.only(right: AppSpacing.sm),
+                    child: ChoiceChip(
+                      label: Text(c),
+                      // Выбор строго один: повторный тап по активному чипу
+                      // возвращает «Все».
+                      selected: _category == c,
+                      onSelected: (_) => setState(
+                          () => _category = _category == c ? _anyCategory : c),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        const SizedBox(height: AppSpacing.sm),
+      ],
+    );
+  }
+
+  /// Карта. Параметры те же, что были до появления фильтров, — изменилась
+  /// только подсветка: совпадения ярче, остальные зоны гаснут.
+  Widget _buildMap(String url, List<Shop> filtered) {
+    // Полный набор — это «фильтра нет», подсвечивать нечего.
+    final highlighted = filtered.length == _shops.length
+        ? const <String>{}
+        : filtered.map((s) => s.id).toSet();
+
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 8),
+      padding: const EdgeInsets.symmetric(horizontal: AppSpacing.sm),
       child: MallMapWidget(
         mapImageUrl: url,
         stores: _stores,
@@ -276,7 +426,7 @@ class _MallMapScreenState extends State<MallMapScreen> {
 
         // Выбор магазина ведёт маршрут от входа; по умолчанию не выбран.
         selectedStoreId: _selectedStoreId,
-        highlightedStoreIds: const <String>{},
+        highlightedStoreIds: highlighted,
         // Посещённые зоны живут в состоянии главного экрана; сюда их
         // прокинуть без общего хранилища нельзя.
         visitedStoreIds: const <String>{},
@@ -299,6 +449,99 @@ class _MallMapScreenState extends State<MallMapScreen> {
           if (shop != null) _showShopInfo(shop);
         },
         onSelectionCleared: () => setState(() => _selectedStoreId = null),
+      ),
+    );
+  }
+
+  /// Список под картой. Высота — 30% экрана, но не больше 240: на вытянутом
+  /// экране список не должен съедать план.
+  Widget _buildShopList(List<Shop> shops) {
+    final height =
+        math.min(MediaQuery.of(context).size.height * 0.3, 240.0);
+
+    return Container(
+      height: height,
+      decoration: const BoxDecoration(
+        color: AppColors.surface,
+        border: Border(top: BorderSide(color: AppColors.border)),
+      ),
+      child: ListView.separated(
+        padding: const EdgeInsets.symmetric(vertical: AppSpacing.sm),
+        itemCount: shops.length,
+        separatorBuilder: (_, _) => const Divider(
+          height: 1,
+          indent: AppSpacing.md,
+          endIndent: AppSpacing.md,
+        ),
+        itemBuilder: (context, index) {
+          final shop = shops[index];
+          // В карточке магазина коротая скидка информативнее полной.
+          final subtitle = shop.shortDiscount.isNotEmpty
+              ? shop.shortDiscount
+              : shop.discount;
+
+          return ListTile(
+            dense: true,
+            selected: shop.id == _selectedStoreId,
+            selectedTileColor: AppColors.primaryContainer,
+            contentPadding:
+                const EdgeInsets.symmetric(horizontal: AppSpacing.md),
+            leading: CircleAvatar(
+              radius: 18,
+              backgroundColor: AppColors.surfaceVariant,
+              // foregroundImage: если картинка не загрузилась, остаётся
+              // child-иконка, а не пустой кружок.
+              foregroundImage:
+                  shop.imageUrl.isEmpty ? null : NetworkImage(shop.imageUrl),
+              child: const Icon(Icons.store,
+                  size: 18, color: AppColors.textSecondary),
+            ),
+            title: Text(
+              shop.name,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                  fontSize: 14, fontWeight: FontWeight.w600),
+            ),
+            subtitle: subtitle.isEmpty
+                ? null
+                : Text(
+                    subtitle,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                        fontSize: 12, color: AppColors.textSecondary),
+                  ),
+            // Тап строки ведёт маршрут к магазину: карта получает
+            // selectedStoreId, диалог не открываем — он для тапа по зоне.
+            onTap: () => setState(() => _selectedStoreId = shop.id),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildNothingFound() {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(AppSpacing.lg),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.search_off,
+                size: 48, color: AppColors.textDisabled),
+            const SizedBox(height: AppSpacing.sm),
+            const Text(
+              'Ничего не найдено',
+              style: TextStyle(fontSize: 15, color: AppColors.textSecondary),
+            ),
+            const SizedBox(height: AppSpacing.xs),
+            TextButton(
+              onPressed: _resetFilters,
+              child: const Text('Сбросить фильтры'),
+            ),
+          ],
+        ),
       ),
     );
   }
