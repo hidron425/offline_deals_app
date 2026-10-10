@@ -2,21 +2,24 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart' as supa;
 import 'category_labels.dart';
 import 'models.dart';
+import 'plural_helpers.dart';
 import 'theme/app_theme.dart';
 import 'widgets/app_widgets.dart';
 
 class AllShopsScreen extends StatefulWidget {
   final void Function(Shop shop)? onStartQuest;
   final Set<String> visitedIds;
-  final Map<String, int> visitedShopCycles;
-  final int currentCycle;
+
+  /// Отлёжка — тот же снимок, что получают «Карта» и карточка магазина.
+  /// Раньше здесь были отдельные visitedShopCycles/currentCycle, и числа
+  /// на экранах расходились.
+  final CooldownInfo cooldown;
 
   const AllShopsScreen({
     super.key,
     this.onStartQuest,
     this.visitedIds = const {},
-    this.visitedShopCycles = const {},
-    this.currentCycle = 0,
+    this.cooldown = const CooldownInfo(),
   });
 
   @override
@@ -115,8 +118,21 @@ class _AllShopsScreenState extends State<AllShopsScreen> {
     return cats;
   }
 
+  /// Сколько циклов магазину ещё отлёживаться. 0 — отлежал или не был.
+  int _cyclesLeftFor(Shop shop) {
+    final lastVisit = widget.cooldown.lastVisitCycleByShop[shop.id];
+    if (lastVisit == null) return 0;
+    final left =
+        (lastVisit + shop.cooldownCycles) - widget.cooldown.currentCycle;
+    return left > 0 ? left : 0;
+  }
+
   void _showShopInfo(Shop shop) {
   final bool isVisited = widget.visitedIds.contains(shop.id);
+  final int cyclesLeft = _cyclesLeftFor(shop);
+  final int? lastVisit = widget.cooldown.lastVisitCycleByShop[shop.id];
+  final bool visitedThisCycle =
+      lastVisit != null && lastVisit == widget.cooldown.currentCycle;
   final infoImage =
       (shop.infoImageUrl.isNotEmpty) ? shop.infoImageUrl : shop.imageUrl;
 
@@ -236,11 +252,22 @@ class _AllShopsScreenState extends State<AllShopsScreen> {
                                 ],
                               ),
                               const SizedBox(height: 8),
-                              const Text(
-                                'Вы уже посещали этот магазин в прошлом цикле. '
-                                'Он снова станет доступен для прохождения '
-                                'в следующих циклах.',
-                                style: TextStyle(fontSize: 13),
+                              Text(
+                                // Те же три случая, что на карточке
+                                // магазина: отлежал / посещён в этом
+                                // цикле / посещён раньше.
+                                cyclesLeft == 0
+                                    ? 'Вы уже посещали этот магазин. Он '
+                                        'снова доступен для прохождения.'
+                                    : visitedThisCycle
+                                        ? 'Вы уже посетили этот магазин в '
+                                            'этом цикле. Он снова станет '
+                                            'доступен через $cyclesLeft '
+                                            '${cyclePlural(cyclesLeft)}.'
+                                        : 'Этот магазин станет доступен '
+                                            'снова через $cyclesLeft '
+                                            '${cyclePlural(cyclesLeft)}.',
+                                style: const TextStyle(fontSize: 13),
                               ),
                             ],
                           ),
@@ -398,10 +425,10 @@ class _AllShopsScreenState extends State<AllShopsScreen> {
     // показывался вовсе. Поля оставляем: по ним будет подпись «доступен
     // с цикла N».
     final isVisited = widget.visitedIds.contains(shop.id);
-    final visitCycle = widget.visitedShopCycles[shop.id];
-    final isOnCooldown =
-        visitCycle != null && widget.currentCycle <= visitCycle;
-    final availableAtCycle = isOnCooldown ? visitCycle + 1 : null;
+    // Та же формула, что на «Карте» и в карточке магазина.
+    final cyclesLeft = _cyclesLeftFor(shop);
+    final availableAtCycle =
+        cyclesLeft > 0 ? widget.cooldown.currentCycle + cyclesLeft : null;
 
     return _ShopCard(
       shop: shop,
@@ -411,6 +438,7 @@ class _AllShopsScreenState extends State<AllShopsScreen> {
       onToggleFavorite: null,
       isVisited: isVisited,
       availableAtCycle: availableAtCycle,
+      cyclesLeft: cyclesLeft,
     );
   },
                           );
@@ -435,6 +463,9 @@ class _AllShopsScreenState extends State<AllShopsScreen> {
   final VoidCallback? onToggleFavorite;
   final bool isVisited;
   final int? availableAtCycle;
+
+  /// Сколько циклов магазину ещё отлёживаться. 0 — отлежал.
+  final int cyclesLeft;
   const _ShopCard({
     required this.shop,
     required this.onTap,
@@ -444,6 +475,7 @@ class _AllShopsScreenState extends State<AllShopsScreen> {
     this.onToggleFavorite,
     this.isVisited = false,
     this.availableAtCycle,
+    this.cyclesLeft = 0,
   });
   @override
   State<_ShopCard> createState() => _ShopCardState();
@@ -491,160 +523,163 @@ class _ShopCardState extends State<_ShopCard> {
               ),
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(AppRadius.lg),
-                child: Stack(
+                // Посещённый магазин не прячем: его должно быть видно и
+                // узнаваемо. Вместо тёмного оверлея — галочка на логотипе,
+                // приглушённое название и серый бейдж с остатком отлёжки
+                // на месте зелёной скидки.
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    // ---------- Основное содержимое карточки ----------
-                    Column(
-                      mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        SizedBox(
-                          height: 90,
-                          child: Stack(
-                            children: [
-                              Positioned.fill(
-                                child: Container(
-                                  decoration: const BoxDecoration(
-                                    color: AppColors.surface,
-                                    border: Border(
-                                      bottom: BorderSide(
-                                        color: AppColors.border,
-                                        width: 1,
-                                      ),
+                    SizedBox(
+                      height: 90,
+                      child: Stack(
+                        children: [
+                          Positioned.fill(
+                            child: Container(
+                              decoration: const BoxDecoration(
+                                color: AppColors.surface,
+                                border: Border(
+                                  bottom: BorderSide(
+                                    color: AppColors.border,
+                                    width: 1,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                          if (widget.shop.imageUrl.isNotEmpty)
+                            Positioned.fill(
+                              child: Padding(
+                                padding: const EdgeInsets.all(8),
+                                child: Image.network(
+                                  widget.shop.imageUrl,
+                                  fit: BoxFit.contain,
+                                  errorBuilder:
+                                      (context, error, stackTrace) => Center(
+                                    child: Text(
+                                      widget.shop.icon,
+                                      style: const TextStyle(fontSize: 40),
                                     ),
                                   ),
                                 ),
                               ),
-                              if (widget.shop.imageUrl.isNotEmpty)
-                                Positioned.fill(
-                                  child: Padding(
-                                    padding: const EdgeInsets.all(8),
-                                    child: Image.network(
-                                      widget.shop.imageUrl,
-                                      fit: BoxFit.contain,
-                                      errorBuilder: (context, error,
-                                              stackTrace) =>
-                                          Center(
-                                        child: Text(
-                                          widget.shop.icon,
-                                          style: const TextStyle(
-                                              fontSize: 40),
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                )
-                              else
-                                Center(
-                                  child: Text(
-                                    widget.shop.icon,
-                                    style: const TextStyle(fontSize: 40),
-                                  ),
+                            )
+                          else
+                            Center(
+                              child: Text(
+                                widget.shop.icon,
+                                style: const TextStyle(fontSize: 40),
+                              ),
+                            ),
+
+                          // Белый кружок под галочкой: на тёмных логотипах
+                          // (BORK, CEZVE) зелёная иконка иначе сливается.
+                          if (widget.isVisited)
+                            Positioned(
+                              top: 4,
+                              right: 4,
+                              child: Container(
+                                padding: const EdgeInsets.all(2),
+                                decoration: const BoxDecoration(
+                                  color: Colors.white,
+                                  shape: BoxShape.circle,
                                 ),
-                            ],
-                          ),
-                        ),
-                        Expanded(
-                          child: Padding(
-                            padding: const EdgeInsets.symmetric(
-                                vertical: 6, horizontal: 6),
-                            child: Column(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Text(
-                                  widget.shop.name,
-                                  style: AppTextStyles.bodyMedium.copyWith(
-                                    fontWeight: FontWeight.w600,
-                                    color: AppColors.textPrimary,
-                                    fontSize: 10,
+                                child: const Icon(
+                                  Icons.check_circle,
+                                  size: 16,
+                                  color: AppColors.success,
+                                ),
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                    Expanded(
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                            vertical: 6, horizontal: 6),
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              widget.shop.name,
+                              style: AppTextStyles.bodyMedium.copyWith(
+                                fontWeight: FontWeight.w600,
+                                // Посещённый магазин приглушаем, но
+                                // оставляем читаемым.
+                                color: widget.isVisited
+                                    ? AppColors.textSecondary
+                                    : AppColors.textPrimary,
+                                fontSize: 10,
+                                height: 1.1,
+                              ),
+                              textAlign: TextAlign.center,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+
+                            // Посещён — серый бейдж с остатком отлёжки.
+                            // Скидку не показываем: забрать её нельзя.
+                            if (widget.isVisited) ...[
+                              const SizedBox(height: 4),
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 8, vertical: 4),
+                                decoration: BoxDecoration(
+                                  color: AppColors.surfaceVariant,
+                                  borderRadius:
+                                      BorderRadius.circular(AppRadius.sm),
+                                ),
+                                child: Text(
+                                  widget.cyclesLeft > 0
+                                      ? 'Доступен через ${widget.cyclesLeft} '
+                                          '${cyclePlural(widget.cyclesLeft)}'
+                                      : 'Уже посещён',
+                                  style: const TextStyle(
+                                    fontSize: 11,
+                                    color: AppColors.textSecondary,
+                                  ),
+                                  maxLines: 2,
+                                  textAlign: TextAlign.center,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                            ] else if (cardDiscount.isNotEmpty) ...[
+                              const SizedBox(height: 4),
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 6, vertical: 2),
+                                decoration: BoxDecoration(
+                                  color: AppColors.successContainer,
+                                  borderRadius:
+                                      BorderRadius.circular(AppRadius.pill),
+                                ),
+                                child: Text(
+                                  cardDiscount,
+                                  style: const TextStyle(
+                                    fontSize: 9,
+                                    fontWeight: FontWeight.w700,
+                                    color: AppColors.success,
                                     height: 1.1,
                                   ),
                                   textAlign: TextAlign.center,
                                   maxLines: 2,
                                   overflow: TextOverflow.ellipsis,
                                 ),
-                                if (cardDiscount.isNotEmpty) ...[
-                                  const SizedBox(height: 4),
-                                  Container(
-                                    padding: const EdgeInsets.symmetric(
-                                        horizontal: 6, vertical: 2),
-                                    decoration: BoxDecoration(
-                                      color: AppColors.successContainer,
-                                      borderRadius: BorderRadius.circular(
-                                          AppRadius.pill),
-                                    ),
-                                    child: Text(
-                                      cardDiscount,
-                                      style: const TextStyle(
-                                        fontSize: 9,
-                                        fontWeight: FontWeight.w700,
-                                        color: AppColors.success,
-                                        height: 1.1,
-                                      ),
-                                      textAlign: TextAlign.center,
-                                      maxLines: 2,
-                                      overflow: TextOverflow.ellipsis,
-                                    ),
-                                  ),
-                                ],
-                              ],
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-
-                                      // ---------- Оверлей "Посещён" ----------
-                  if (widget.isVisited)
-                    Positioned.fill(
-                      child: IgnorePointer(
-                        child: Container(
-                          color: Colors.black.withOpacity(0.55),
-                          child: Center(
-                            child: Padding(
-                              padding: const EdgeInsets.symmetric(horizontal: 6),
-                              child: Column(
-                                mainAxisSize: MainAxisSize.min,
-                                children: const [
-                                  Icon(
-                                    Icons.check_circle,
-                                    color: Colors.white,
-                                    size: 32,
-                                  ),
-                                  SizedBox(height: 6),
-                                  Text(
-                                    'Посещён',
-                                    style: TextStyle(
-                                      color: Colors.white,
-                                      fontSize: 13,
-                                      fontWeight: FontWeight.w700,
-                                    ),
-                                  ),
-                                  SizedBox(height: 4),
-                                  Text(
-                                    'Магазин будет доступен в следующих циклах',
-                                    style: TextStyle(
-                                      color: Colors.white,
-                                      fontSize: 10,
-                                      fontWeight: FontWeight.w600,
-                                      height: 1.15,
-                                    ),
-                                    textAlign: TextAlign.center,
-                                  ),
-                                ],
                               ),
-                            ),
-                          ),
+                            ],
+                          ],
                         ),
                       ),
                     ),
                   ],
+                ),
               ),
             ),
           ),
         ),
-      ),
     );
   }
 }

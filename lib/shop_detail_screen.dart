@@ -12,6 +12,7 @@ import 'package:flutter/material.dart';
 import 'category_labels.dart';
 import 'map/mall_map_widget.dart';
 import 'models.dart';
+import 'plural_helpers.dart';
 import 'theme/app_theme.dart';
 
 /// Откуда вести маршрут. Пока доступен только вход в ТЦ: геолокация внутри
@@ -34,6 +35,11 @@ class ShopDetailScreen extends StatefulWidget {
 
   final Set<String> visitedStoreIds;
 
+  /// Отлёжка на момент открытия страницы: shop_id -> цикл последнего
+  /// визита и номер текущего цикла. Снимок — страница живёт недолго.
+  final Map<String, int> lastVisitCycleByShop;
+  final int currentCycle;
+
   /// Запустить квест с этого магазина. null — баннер скидки не нажимается
   /// (например, если страницу открыли не из вкладки «Карта»).
   final void Function(Shop shop)? onStartQuestFromShop;
@@ -46,6 +52,8 @@ class ShopDetailScreen extends StatefulWidget {
     required this.entrancePosition,
     required this.planBounds,
     this.visitedStoreIds = const <String>{},
+    this.lastVisitCycleByShop = const <String, int>{},
+    this.currentCycle = 0,
     this.onStartQuestFromShop,
   });
 
@@ -131,6 +139,17 @@ class _ShopDetailScreenState extends State<ShopDetailScreen> {
     final shop = widget.shop;
     final hasDiscount =
         shop.shortDiscount.isNotEmpty || shop.discount.isNotEmpty;
+
+    // Статус визита. Формула отлёжки — та же, что в списке на «Карте» и
+    // в каталоге. Скидку при отлёжке НЕ скрываем: здесь она справочная —
+    // пользователь смотрит, что получит, когда магазин вернётся.
+    final everVisited = widget.visitedStoreIds.contains(shop.id);
+    final lastVisit = widget.lastVisitCycleByShop[shop.id];
+    final cyclesLeft = lastVisit == null
+        ? 0
+        : (lastVisit + shop.cooldownCycles) - widget.currentCycle;
+    final onCooldown = cyclesLeft > 0;
+    final visitedThisCycle = lastVisit != null && lastVisit == widget.currentCycle;
 
     return Scaffold(
       appBar: AppBar(title: Text(shop.name)),
@@ -253,6 +272,63 @@ class _ShopDetailScreenState extends State<ShopDetailScreen> {
                       ],
                     ),
                   ),
+                ),
+              ),
+            ),
+
+          // --- статус визита ---
+          if (onCooldown || everVisited)
+            Padding(
+              padding: const EdgeInsets.symmetric(
+                  horizontal: AppSpacing.md, vertical: AppSpacing.sm),
+              child: Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: AppColors.surfaceVariant,
+                  borderRadius: BorderRadius.circular(AppRadius.md),
+                ),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Icon(Icons.check_circle,
+                        size: 20, color: AppColors.success),
+                    const SizedBox(width: AppSpacing.sm),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            'Уже посещён',
+                            style: TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w600,
+                              color: AppColors.success,
+                            ),
+                          ),
+                          const SizedBox(height: AppSpacing.xs),
+                          Text(
+                            !onCooldown
+                                ? 'Вы уже посещали этот магазин. Он снова '
+                                    'доступен для прохождения.'
+                                : visitedThisCycle
+                                    ? 'Вы уже посетили этот магазин в этом '
+                                        'цикле. Он снова станет доступен '
+                                        'через $cyclesLeft '
+                                        '${cyclePlural(cyclesLeft)}.'
+                                    : 'Этот магазин станет доступен снова '
+                                        'через $cyclesLeft '
+                                        '${cyclePlural(cyclesLeft)}.',
+                            style: const TextStyle(
+                              fontSize: 13,
+                              color: AppColors.textSecondary,
+                              height: 1.35,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ),

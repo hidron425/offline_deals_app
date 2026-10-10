@@ -23,6 +23,7 @@ import 'main.dart' show MainScreen;
 import 'map/mall_map_widget.dart';
 import 'map/shop_zone.dart';
 import 'models.dart';
+import 'plural_helpers.dart';
 import 'shop_detail_screen.dart';
 import 'theme/app_theme.dart';
 
@@ -35,10 +36,15 @@ class MallMapScreen extends StatefulWidget {
   /// приходит только для чтения. null — подсветку посещённых не рисуем.
   final ValueListenable<Set<String>>? visitedStoreIds;
 
+  /// Отлёжка: по ней считается подпись «будет доступен через N циклов».
+  /// Как и visitedStoreIds, принадлежит MainScreen.
+  final ValueListenable<CooldownInfo>? cooldown;
+
   const MallMapScreen({
     super.key,
     this.onStartQuestFromShop,
     this.visitedStoreIds,
+    this.cooldown,
   });
 
   @override
@@ -499,18 +505,29 @@ class _MallMapScreenState extends State<MallMapScreen> {
   /// только список, а не фильтры и не карта (тот же приём, что в _buildMap).
   Widget _buildShopList(List<Shop> shops) {
     final visitedListenable = widget.visitedStoreIds;
-    if (visitedListenable == null) {
-      return _buildShopListBody(shops, const <String>{});
+    final cooldownListenable = widget.cooldown;
+
+    Widget withCooldown(Set<String> visited) {
+      if (cooldownListenable == null) {
+        return _buildShopListBody(shops, visited, const CooldownInfo());
+      }
+      return ValueListenableBuilder<CooldownInfo>(
+        valueListenable: cooldownListenable,
+        builder: (context, cd, _) => _buildShopListBody(shops, visited, cd),
+      );
     }
+
+    if (visitedListenable == null) return withCooldown(const <String>{});
     return ValueListenableBuilder<Set<String>>(
       valueListenable: visitedListenable,
-      builder: (context, visited, _) => _buildShopListBody(shops, visited),
+      builder: (context, visited, _) => withCooldown(visited),
     );
   }
 
   /// Высота — 30% экрана, но не больше 240: на вытянутом экране список не
   /// должен съедать план.
-  Widget _buildShopListBody(List<Shop> shops, Set<String> visited) {
+  Widget _buildShopListBody(
+      List<Shop> shops, Set<String> visited, CooldownInfo cooldown) {
     final height =
         math.min(MediaQuery.of(context).size.height * 0.3, 240.0);
 
@@ -538,6 +555,14 @@ class _MallMapScreenState extends State<MallMapScreen> {
             final subtitle = shop.shortDiscount.isNotEmpty
                 ? shop.shortDiscount
                 : shop.discount;
+
+            // Сколько циклов осталось отлежать. Та же формула, что в
+            // каталоге и на карточке магазина.
+            final lastVisit = cooldown.lastVisitCycleByShop[shop.id];
+            final cyclesLeft = lastVisit == null
+                ? 0
+                : (lastVisit + shop.cooldownCycles) - cooldown.currentCycle;
+            final onCooldown = cyclesLeft > 0;
 
             return ListTile(
               dense: true,
@@ -592,18 +617,30 @@ class _MallMapScreenState extends State<MallMapScreen> {
                     ),
                 ],
               ),
-              subtitle: subtitle.isEmpty
-                  ? null
-                  : Text(
-                      subtitle,
+              // Пока магазин отлёживается, скидку не показываем: в списке
+              // это индикатор «можно забрать», а забрать нельзя.
+              subtitle: onCooldown
+                  ? Text(
+                      'Будет доступен через $cyclesLeft '
+                      '${cyclePlural(cyclesLeft)}',
                       maxLines: 1,
+                      softWrap: false,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
                           fontSize: 12, color: AppColors.textSecondary),
-                    ),
+                    )
+                  : (subtitle.isEmpty
+                      ? null
+                      : Text(
+                          subtitle,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                              fontSize: 12, color: AppColors.textSecondary),
+                        )),
               // Тап строки открывает карточку магазина с маршрутом. Диалог
               // _showShopInfo остаётся на тапе по зоне самой карты.
-              onTap: () => _openShopDetail(shop),
+              onTap: () => _openShopDetail(shop, cooldown),
             );
           },
         ),
@@ -611,7 +648,7 @@ class _MallMapScreenState extends State<MallMapScreen> {
     );
   }
 
-  void _openShopDetail(Shop shop) {
+  void _openShopDetail(Shop shop, CooldownInfo cooldown) {
     final url = _mapImageUrl;
     if (url == null || url.isEmpty) return;
     Navigator.of(context).push(
@@ -625,6 +662,8 @@ class _MallMapScreenState extends State<MallMapScreen> {
           // Снимок на момент открытия: страница магазина живёт недолго и
           // пересчитывать посещённые на ходу ей не нужно.
           visitedStoreIds: widget.visitedStoreIds?.value ?? const <String>{},
+          lastVisitCycleByShop: cooldown.lastVisitCycleByShop,
+          currentCycle: cooldown.currentCycle,
           onStartQuestFromShop: widget.onStartQuestFromShop,
         ),
       ),

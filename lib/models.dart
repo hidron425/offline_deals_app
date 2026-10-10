@@ -116,6 +116,21 @@ class Shop {
   }
 }
 
+/// Снимок данных о отлёжке для экранов, которые не владеют состоянием
+/// квеста: карта магазинов и каталог считают по нему «доступен через N».
+class CooldownInfo {
+  /// shop_id -> номер цикла последнего визита.
+  final Map<String, int> lastVisitCycleByShop;
+
+  /// Сколько циклов пользователь уже закрыл (0 в первом цикле).
+  final int currentCycle;
+
+  const CooldownInfo({
+    this.lastVisitCycleByShop = const {},
+    this.currentCycle = 0,
+  });
+}
+
 /// Акция магазина. Разделены по поводу визита: первый визит и повторный
 /// (после отлёжки cooldown_cycles). Лежат в public.shop_promotions.
 class ShopPromotion {

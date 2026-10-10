@@ -299,6 +299,11 @@ class _MainScreenState extends State<MainScreen> {
   final ValueNotifier<Set<String>> _visitedShopIds =
       ValueNotifier(const <String>{});
 
+  /// Отлёжка: карта последних визитов и номер текущего цикла. Как и
+  /// _visitedShopIds, принадлежит MainScreen, а пишет её вкладка «Акции».
+  final ValueNotifier<CooldownInfo> _cooldown =
+      ValueNotifier(const CooldownInfo());
+
   /// Счётчик «вкладку открыли». Нужен из-за IndexedStack: вкладки больше не
   /// перемонтируются, и загрузчики в initState срабатывают один раз за
   /// запуск. Экраны слушают тик и перечитывают свои данные.
@@ -308,10 +313,15 @@ class _MainScreenState extends State<MainScreen> {
   void initState() {
     super.initState();
     _screens = [
-      DealsGameScreen(key: _questKey, visitedShopIdsOut: _visitedShopIds),
+      DealsGameScreen(
+        key: _questKey,
+        visitedShopIdsOut: _visitedShopIds,
+        cooldownOut: _cooldown,
+      ),
       MallMapScreen(
         onStartQuestFromShop: _handleStartQuestFromShop,
         visitedStoreIds: _visitedShopIds,
+        cooldown: _cooldown,
       ),
       ProfileScreen(tabTick: _tabTick),
     ];
@@ -320,6 +330,7 @@ class _MainScreenState extends State<MainScreen> {
   @override
   void dispose() {
     _visitedShopIds.dispose();
+    _cooldown.dispose();
     _tabTick.dispose();
     super.dispose();
   }
@@ -1497,7 +1508,14 @@ class DealsGameScreen extends StatefulWidget {
   /// другие вкладки. null — никто не слушает.
   final ValueNotifier<Set<String>>? visitedShopIdsOut;
 
-  const DealsGameScreen({super.key, this.visitedShopIdsOut});
+  /// Куда зеркалить данные об отлёжке для других вкладок.
+  final ValueNotifier<CooldownInfo>? cooldownOut;
+
+  const DealsGameScreen({
+    super.key,
+    this.visitedShopIdsOut,
+    this.cooldownOut,
+  });
 
   @override
   State<DealsGameScreen> createState() => DealsGameScreenState();
@@ -1514,6 +1532,18 @@ class DealsGameScreenState extends State<DealsGameScreen> {
   void _publishVisited() {
     _cachedVisitedIds = Set<String>.unmodifiable(_allVisitedShopIds);
     widget.visitedShopIdsOut?.value = _cachedVisitedIds;
+    // Отлёжка меняется там же, где посещения, — публикуем за компанию.
+    _publishCooldown();
+  }
+
+  /// Снимок отлёжки наружу. Новый объект на каждый вызов, поэтому
+  /// ValueNotifier всегда уведомляет слушателей.
+  void _publishCooldown() {
+    widget.cooldownOut?.value = CooldownInfo(
+      lastVisitCycleByShop:
+          Map<String, int>.unmodifiable(_lastVisitCycleByShop),
+      currentCycle: _cycleCount,
+    );
   }
 
   /// Пересобирает набор подсвеченных зон. Зовётся там же, где меняется
@@ -1802,6 +1832,7 @@ void initState() {
         if (existing == null || cyc > existing) m[shop] = cyc;
       }
       _lastVisitCycleByShop = m;
+      _publishCooldown();
     } catch (e) {
       debugPrint('❌ _loadVisitCycles: $e');
       _lastVisitCycleByShop = const {};
@@ -1885,6 +1916,11 @@ void initState() {
         _lastShopId = lastId;
         _lastShop = lastShop;
       });
+      // _publishVisited() выше отработал ДО этой setState, то есть отдал
+      // наружу ещё нулевой _cycleCount. Публикуем снова, уже с
+      // загруженным: иначе «Карта» и карточка магазина считают отлёжку от
+      // цикла 0 и завышают остаток.
+      _publishCooldown();
       // асинхронно обновляем last_active, не блокируя UI
 //Future.microtask(() async {
   //try {
@@ -1983,6 +2019,8 @@ void initState() {
     _lastCafeDate = null;
     _lastElectronicsDate = null;
     _selectedRouteShop = null;
+    // После сброса _cycleCount — иначе наружу уйдёт старый номер цикла.
+    _publishCooldown();
   });
   try {
     final deleted = await _sb
@@ -3245,6 +3283,7 @@ Expanded(
       _completedSteps = 0;
       _usedShopIds.clear();
       _cycleCount = newCycleCount;
+      _publishCooldown();
       _isPathActive = true;
       _pendingForkShops = null;
       _syncForkHighlight();
@@ -3770,6 +3809,12 @@ const SizedBox(height: AppSpacing.md),
               MaterialPageRoute(
                 builder: (_) => AllShopsScreen(
                   visitedIds: _cachedVisitedIds,
+                  // Тот же источник отлёжки, что у «Карты» и карточки
+                  // магазина, — иначе числа на экранах расходятся.
+                  cooldown: CooldownInfo(
+                    lastVisitCycleByShop: _lastVisitCycleByShop,
+                    currentCycle: _cycleCount,
+                  ),
                   onStartQuest: (shop) => _activateShop(shop),
                 ),
               ),
@@ -3864,7 +3909,8 @@ const SizedBox(height: AppSpacing.md),
                   QuestStepsBar(totalSteps: _totalSteps, completedSteps: _completedSteps),
                   const SizedBox(height: AppSpacing.sm),
                   Text(
-                    'Цикл $_cycleCount – Прогресс: $_completedSteps / $_totalSteps',
+                    // +1 только в отображении: поле 0-based (0 — первый цикл).
+                    'Цикл ${_cycleCount + 1} – Прогресс: $_completedSteps / $_totalSteps',
                     style: AppTextStyles.bodyMedium,
                     textAlign: TextAlign.center,
                   ),
