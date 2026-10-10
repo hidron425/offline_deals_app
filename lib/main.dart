@@ -1547,6 +1547,18 @@ class DealsGameScreenState extends State<DealsGameScreen> {
   String? _selectedMallId;
   bool _isLoading = true;
 
+  // --- cooldown / акции (этап 1: данные есть, UI их пока не читает) ---
+
+  /// Активные акции всех магазинов ТЦ и те же акции, разложенные по shop_id.
+  /// Плоский список пока только заполняется — читает его этап 3.
+  // ignore: unused_field
+  List<ShopPromotion> _promotions = const [];
+  Map<String, List<ShopPromotion>> _promotionsByShop = const {};
+
+  /// Номер цикла последнего визита по каждому магазину — из
+  /// user_shop_visits. По нему этап 2 посчитает, отлежался ли магазин.
+  Map<String, int> _lastVisitCycleByShop = const {};
+
   List<Shop>? _pendingForkShops;
 
   /// Наборы для MallMapWidget держим в полях, а не собираем в build.
@@ -1738,6 +1750,85 @@ void initState() {
       _allShops = all;
     });
     _shopById = { for (final s in _allShops) s.id : s };
+    await _loadPromotions();
+    await _loadVisitCycles();
+  }
+
+  /// Акции магазинов. Пустая таблица или ошибка запроса — оба поля
+  /// остаются пустыми, квест от этого не зависит.
+  Future<void> _loadPromotions() async {
+    try {
+      final rows = await _sb
+          .from('shop_promotions')
+          .select('id, shop_id, kind, title, short_discount, discount, '
+              'description, image_url, priority, is_active')
+          .eq('is_active', true);
+
+      final parsed = (rows as List)
+          .map((r) => ShopPromotion.fromSupabase(Map<String, dynamic>.from(r)))
+          .whereType<ShopPromotion>()
+          .toList();
+
+      final byShop = <String, List<ShopPromotion>>{};
+      for (final p in parsed) {
+        (byShop[p.shopId] ??= []).add(p);
+      }
+
+      _promotions = parsed;
+      _promotionsByShop = byShop;
+    } catch (e) {
+      debugPrint('❌ _loadPromotions: $e');
+      _promotions = const [];
+      _promotionsByShop = const {};
+    }
+  }
+
+  /// Последний цикл визита по каждому магазину. Берём максимум: строк на
+  /// магазин может быть много, а нужна самая свежая.
+  Future<void> _loadVisitCycles() async {
+    try {
+      final rows = await _sb
+          .from('user_shop_visits')
+          .select('shop_id, cycle_number')
+          .eq('user_id', _userId)
+          .order('cycle_number', ascending: false);
+
+      final m = <String, int>{};
+      for (final row in (rows as List)) {
+        final shop = row['shop_id'] as String?;
+        final cyc = (row['cycle_number'] as num?)?.toInt();
+        if (shop == null || cyc == null) continue;
+        final existing = m[shop];
+        if (existing == null || cyc > existing) m[shop] = cyc;
+      }
+      _lastVisitCycleByShop = m;
+    } catch (e) {
+      debugPrint('❌ _loadVisitCycles: $e');
+      _lastVisitCycleByShop = const {};
+    }
+  }
+
+  /// Какую акцию показать магазину: для повторного визита берём
+  /// 'repeat_visit', а если его нет — откатываемся к 'first_visit'.
+  ///
+  /// Пока ниоткуда не вызывается: подключение в UI — этап 3.
+  // ignore: unused_element
+  ShopPromotion? _pickPromotion(String shopId, {required bool wasVisited}) {
+    final list = _promotionsByShop[shopId];
+    if (list == null || list.isEmpty) return null;
+
+    ShopPromotion? first;
+    ShopPromotion? repeat;
+    for (final p in list) {
+      if (p.kind == 'first_visit' && first == null) first = p;
+      if (p.kind == 'repeat_visit' && repeat == null) repeat = p;
+    }
+
+    if (wasVisited) {
+      // Повторный визит: берём repeat, если его нет — откатываемся к first.
+      return repeat ?? first;
+    }
+    return first;
   }
 
   Future<void> _loadBanners() async {
@@ -2364,6 +2455,43 @@ bool isAlreadyInList(List<dynamic> list, String ruleId) {
     return true;
   }
 
+  // Магазин отлежал cooldown: последний визит был не позже чем
+  // currentCycle - cooldown_cycles. Никогда не посещённые — всегда
+  // доступны. Порог берётся у самого магазина, поэтому shop с
+  // cooldown_cycles = 2 возвращается раньше, чем с 5.
+  bool cooldownOk(Shop s, {int slack = 0}) {
+    final lastVisit = _lastVisitCycleByShop[s.id];
+    if (lastVisit == null) return true;
+    // Визит из цикла, который ещё не наступил, — не «недавно был», а
+    // устаревшая запись или откат cycle_count (_fullReset чистит счётчик,
+    // но не user_shop_visits; то же при смене ТЦ). Разница тогда
+    // отрицательная и не проходит ни при каком slack — магазин запирался
+    // навсегда. Считаем, что данных о cooldown нет, как при null.
+    if (lastVisit > _cycleCount) return true;
+    final required = (s.cooldownCycles - slack).clamp(0, 999);
+    return (_cycleCount - lastVisit) >= required;
+  }
+
+  // Идём от строгого порога к расслабленному: первый slack, на котором
+  // набралось ≥ 2 кандидата, побеждает. Так cooldown соблюдается, пока
+  // это возможно, и не роняет квест, когда магазинов мало.
+  for (int slack = 0; slack <= 5; slack++) {
+    final pool = _allShops
+        .where((s) => baseFilter(s) && cooldownOk(s, slack: slack))
+        .toList();
+    if (pool.length >= 2) {
+      // Внутри пула «новые вперёд» работает как раньше: cooldown —
+      // это жёсткая доступность, а _allVisitedShopIds — предпочтение.
+      final newOnly = pool
+          .where((s) => !_allVisitedShopIds.contains(s.id))
+          .toList();
+      if (newOnly.length >= 2) return newOnly;
+      return pool;
+    }
+  }
+
+  // Fallback: даже при slack = 5 кандидатов меньше двух — работаем как
+  // раньше, вообще без cooldown, иначе квест упрётся в тупик.
   final allAvailable = _allShops.where(baseFilter).toList();
 
   // Приоритет — магазины, где клиент ещё не был
@@ -2373,8 +2501,6 @@ bool isAlreadyInList(List<dynamic> list, String ruleId) {
 
   if (newOnly.length >= 2) return newOnly;
 
-  // Если новых меньше двух — возвращаем все доступные,
-  // чтобы квест не сломался
   return allAvailable;
 }
 
@@ -2633,8 +2759,56 @@ Future<void> _showStartQuestDialog() async {
     return;
   }
 
-  // Отладочная телеметрия. Не должна задерживать показ диалога.
+  // Отладочная телеметрия. Не должна задерживать показ диалога и не должна
+  // влиять на отбор: всё, что ниже, только читает состояние.
   try {
+    // Пересчёт для лога. _getAvailableForFork — чистая функция, повторный
+    // вызов ничего не меняет; на сам отбор идёт результат из
+    // _getNextTwoShops выше, а не этот.
+    final available = _getAvailableForFork(currentShop);
+    final availableIds = available.map((s) => s.id).toSet();
+    final todayStr = DateFormat('yyyy-MM-dd').format(DateTime.now());
+
+    // Предикаты намеренно дублируют _getAvailableForFork в том же порядке:
+    // логирование не должно иметь шанса повлиять на фильтр. Меняются
+    // правила — менять надо в двух местах.
+    String? blockReason(Shop s) {
+      if (s.id == currentShop.id) return 'current';
+      if (_usedShopIds.contains(s.id)) return 'used_this_cycle';
+      if (s.category == 'cafe' && _lastCafeDate == todayStr) {
+        return 'daily_cafe';
+      }
+      if (s.category == 'electronics' && _lastElectronicsDate == todayStr) {
+        return 'daily_electronics';
+      }
+      final lastVisit = _lastVisitCycleByShop[s.id];
+      if (lastVisit != null) {
+        final rested = _cycleCount - lastVisit;
+        // Не отлежал даже на самом расслабленном пороге (slack = 5).
+        if (rested < (s.cooldownCycles - 5).clamp(0, 999)) return 'cooldown';
+        // Отлежал на каком-то slack > 0, но не на строгом.
+        if (rested < s.cooldownCycles) return 'slack_filtered';
+      }
+      // Фильтры прошёл, но в пул не попал — его вытеснило правило
+      // «сначала новые» (_allVisitedShopIds).
+      return null;
+    }
+
+    final blocked = <Map<String, dynamic>>[];
+    for (final s in _allShops) {
+      if (availableIds.contains(s.id)) continue;
+      // 100 вмещает весь ТЦ (~90 магазинов); обрезку оставляем как
+      // страховку, если магазинов станет заметно больше.
+      if (blocked.length >= 100) {
+        blocked.add({'shop_id': '...truncated', 'reason': '...truncated'});
+        break;
+      }
+      blocked.add({
+        'shop_id': s.id,
+        'reason': blockReason(s) ?? 'prefer_new',
+      });
+    }
+
     unawaited(_sb.from('debug_fork_logs').insert({
       'user_id': _userId,
       'current_shop_id': currentShop.id,
@@ -2650,6 +2824,15 @@ Future<void> _showStartQuestDialog() async {
       'collab_shop_id': hasCollab ? toShop!.id : '',
       'collab_shop_name': hasCollab ? toShop!.name : '',
       'selected_shops': nextShops.take(2).map((s) => s.id).toList(),
+      // --- контекст развилки ---
+      'cycle_number': _cycleCount,
+      // Уже завершённый шаг: _completedSteps увеличивается в setState той
+      // же активации до показа развилки. Читается как «на шаге N был в
+      // current_shop_id, дальше предложены selected_shops».
+      'step_in_cycle': _completedSteps,
+      'available_count': available.length,
+      'blocked_count': _allShops.length - available.length,
+      'blocked_shops': blocked,
     }).catchError((Object e) {
       print('❌ debug_fork_logs: $e');
     }));
@@ -2874,6 +3057,24 @@ Expanded(
     }
 
     await _saveProgress();
+
+    // Журнал визитов для cooldown. Fire-and-forget: развилка и запись
+    // прогресса от него не зависят, а этап 2 читает его при загрузке.
+    unawaited(
+      _sb.from('user_shop_visits').insert({
+        'user_id': _userId,
+        'shop_id': shop.id,
+        'cycle_number': _cycleCount,
+      }).catchError((Object e) {
+        debugPrint('❌ user_shop_visits insert: $e');
+      }),
+    );
+    // Локальный кэш — чтобы следующая развилка в этой же сессии видела
+    // свежее значение, не дожидаясь перезагрузки.
+    _lastVisitCycleByShop = {
+      ..._lastVisitCycleByShop,
+      shop.id: _cycleCount,
+    };
 
     // Развилка не зависит ни от одной записи ниже: один round trip вместо
     // восьми — диалог появляется через ~150 мс, а не через 2 секунды.

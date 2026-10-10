@@ -28,6 +28,10 @@ class Shop {
   final List<double>? rawLabelRect;   // [x, y, w, h] из jsonb
   final List<List<double>>? rawLabelPolygon;   // [[x,y],...] из jsonb
 
+  /// Сколько полных циклов магазин недоступен после визита
+  /// (shops.cooldown_cycles). Дефолт тот же, что у колонки в БД.
+  final int cooldownCycles;
+
   Shop({
     required this.id,
     required this.name,
@@ -55,6 +59,7 @@ class Shop {
     this.rawLabelAngle,
     this.rawLabelRect,
     this.rawLabelPolygon,
+    this.cooldownCycles = 5,
   });
 
   factory Shop.fromSupabase(Map<String, dynamic> json) {
@@ -100,12 +105,71 @@ class Shop {
               .map((v) => v.toDouble())
               .toList()
           : null,
+      cooldownCycles: (json['cooldown_cycles'] as num?)?.toInt() ?? 5,
       rawLabelPolygon: json['label_polygon'] is List
           ? (json['label_polygon'] as List)
               .whereType<List>()
               .map((p) => p.whereType<num>().map((v) => v.toDouble()).toList())
               .toList()
           : null,
+    );
+  }
+}
+
+/// Акция магазина. Разделены по поводу визита: первый визит и повторный
+/// (после отлёжки cooldown_cycles). Лежат в public.shop_promotions.
+class ShopPromotion {
+  final String id;
+  final String shopId;
+
+  /// 'first_visit' | 'repeat_visit'. Строкой, а не enum: значения приходят
+  /// из БД, и неизвестный вид не должен ломать разбор строки.
+  final String kind;
+
+  final String title;
+  final String shortDiscount;
+  final String discount;
+  final String description;
+  final String? imageUrl;
+  final int priority;
+  final bool isActive;
+
+  const ShopPromotion({
+    required this.id,
+    required this.shopId,
+    required this.kind,
+    this.title = '',
+    this.shortDiscount = '',
+    this.discount = '',
+    this.description = '',
+    this.imageUrl,
+    this.priority = 0,
+    this.isActive = true,
+  });
+
+  /// null, если строка без id/shop_id/kind — такую акцию не к чему
+  /// привязать, и пусть лучше её не будет, чем полупустая.
+  static ShopPromotion? fromSupabase(Map<String, dynamic> json) {
+    final id = json['id']?.toString();
+    final shopId = json['shop_id']?.toString();
+    final kind = json['kind']?.toString();
+    if (id == null || id.isEmpty) return null;
+    if (shopId == null || shopId.isEmpty) return null;
+    if (kind == null || kind.isEmpty) return null;
+
+    return ShopPromotion(
+      id: id,
+      shopId: shopId,
+      kind: kind,
+      title: json['title']?.toString() ?? '',
+      shortDiscount: json['short_discount']?.toString() ?? '',
+      discount: json['discount']?.toString() ?? '',
+      description: json['description']?.toString() ?? '',
+      imageUrl: (json['image_url'] as String?)?.trim().isEmpty ?? true
+          ? null
+          : json['image_url'] as String?,
+      priority: (json['priority'] as num?)?.toInt() ?? 0,
+      isActive: json['is_active'] as bool? ?? true,
     );
   }
 }
